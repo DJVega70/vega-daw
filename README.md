@@ -1,0 +1,47 @@
+# Vega Productions DAW (VP-20)
+
+A digital audio workstation for the Vega Productions suite — built on the open-source **Tracktion Engine** (the engine behind Waveform) and JUCE.
+
+![arrange](docs/screenshot.png)
+![mixer](docs/mixer.png)
+
+## Download
+- **Windows:** https://github.com/DJVega70/vega-daw/releases/latest/download/VegaProductions-DAW-Windows.zip — unzip anywhere and run `Vega Productions DAW.exe`.
+- **Mac:** https://github.com/DJVega70/vega-daw/releases/latest/download/VegaProductions-DAW-macOS.zip — drag the app to Applications, then run once in Terminal: `xattr -cr "/Applications/Vega Productions DAW.app"`
+
+First run: **Options > Audio / MIDI settings** (pick ASIO / WASAPI on Windows, CoreAudio on Mac, and enable your MIDI keyboard), then **Options > Plugins** and press *Scan* so your VST3 / AU plugins — including the whole Vega Productions suite — show up.
+
+## Stage 1 features
+**Audio engine** — 32-bit floating-point processing, multi-core graph, plugin delay compensation (Tracktion Engine). ASIO (when available at build time), WASAPI and DirectSound on Windows; CoreAudio on Mac.
+
+**Arrange**
+- Audio, instrument and bus tracks; record audio and MIDI (arm **R**, choose inputs with **IN**, input monitoring), loop recording, metronome.
+- Non-destructive clips: move (also between tracks), trim either edge, fade in/out handles, split at playhead, duplicate (Alt-drag or Ctrl+D), mute, rename, clip gain, reverse, loop.
+- Audio clips: **Warp to project tempo** (time-stretch) and **pitch shift** ±12 semitones, **slice at transients**.
+- Drag audio (WAV/AIFF/FLAC/OGG/MP3) or MIDI files straight onto the timeline.
+- Snap to bar / beat / 1/8 / 1/16, zoom (Ctrl+wheel), loop range on the ruler, tempo and time signature, undo/redo.
+
+**Piano roll** — add / move / resize / delete notes, velocity lane, grid incl. triplets, quantise, note audition.
+
+**Mixer** — channel strips with inserts (VST3/AU or built-ins: EQ, compressor, reverb, delay, chorus, phaser, filter, pitch shift), plugin bypass/re-order, **aux sends** to buses, **output routing** of tracks into buses, **sidechain inputs** for plugins that support them, pan, fader, meters, mute/solo, master.
+
+**Instruments** — every instrument track can host any VST3/AU synth (Vega Multisynth, Workstation, Drums, Sampler, Chords…) or the built-in 4-Osc synth / sampler. Your MIDI keyboard plays whichever instrument track is selected.
+
+**Files** — projects saved as `.vegaproj`; export the mixdown (or just the loop range) to 24-bit WAV.
+
+## Roadmap
+- **Stage 2:** automation lanes, MIDI-learn, Mackie Control (motorised faders), more clip editing (warp markers, transient editing), track freeze.
+- **Stage 3:** Ableton Push / controller scripts, routing matrix view, comping, video.
+
+AAX is not supported: Avid only allows AAX plugins inside Pro Tools.
+
+## Building
+```
+git clone https://github.com/Tracktion/tracktion_engine.git te   # see TE_COMMIT in the workflow
+git -C te submodule update --init modules/juce
+cmake -B build -DTE_DIR=$PWD/te -DVEGA_TESTS=ON
+cmake --build build --config Release --target VegaDAW VegaDAWTest
+```
+
+## License
+GPLv3 (see `LICENSE`), because Tracktion Engine is used under its GPLv3 license (`TRACKTION_LICENSE.md`). Free for your own use; selling it would need a commercial Tracktion Engine license.

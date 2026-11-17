@@ -1,0 +1,118 @@
+name: Build Vega Productions DAW
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  TE_COMMIT: c6293127cdc0a8488aea2ae0907f4709ee89c228   # Tracktion Engine (GPLv3), pinned
+
+jobs:
+  test:
+    name: Engine self-test (Linux, headless)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libjack-jackd2-dev libfreetype6-dev libfontconfig1-dev libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev libxi-dev libgl1-mesa-dev libcurl4-openssl-dev
+      - name: Fetch Tracktion Engine
+        run: |
+          git clone --filter=blob:none https://github.com/Tracktion/tracktion_engine.git te
+          cd te && git checkout $TE_COMMIT
+          git -c url."https://github.com/".insteadOf="git@github.com:" submodule update --init --depth 1 modules/juce
+      - name: Build test
+        run: |
+          cmake -B build -DTE_DIR=$PWD/te -DVEGA_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target VegaDAWTest -j4
+      - name: Run engine self-test
+        run: build/VegaDAWTest_artefacts/Release/VegaDAWTest
+
+  windows:
+    name: Windows app
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch Tracktion Engine
+        shell: bash
+        run: |
+          git clone --filter=blob:none https://github.com/Tracktion/tracktion_engine.git te
+          cd te && git checkout $TE_COMMIT
+          git -c url."https://github.com/".insteadOf="git@github.com:" submodule update --init --depth 1 modules/juce
+      - name: Fetch ASIO SDK (optional - builds with WASAPI/DirectSound if unavailable)
+        shell: bash
+        continue-on-error: true
+        run: |
+          curl -fL -o asio.zip "https://www.steinberg.net/asiosdk" && unzip -q asio.zip -d asio
+          dir=$(dirname "$(find asio -name iasiodrv.h | head -1)")
+          [ -n "$dir" ] && echo "ASIO_DIR=$(cd "$dir/.." && pwd -W)" >> $GITHUB_ENV
+      - name: Configure
+        shell: bash
+        run: |
+          EXTRA=""
+          if [ -n "$ASIO_DIR" ]; then EXTRA="-DVEGA_ASIO=ON -DASIO_SDK_DIR=$ASIO_DIR"; echo "Building with ASIO"; fi
+          cmake -B build -G "Visual Studio 17 2022" -A x64 -DTE_DIR="$(pwd -W)/te" $EXTRA
+      - name: Build
+        run: cmake --build build --config Release --target VegaDAW --parallel
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item "build/VegaDAW_artefacts/Release/Vega Productions DAW.exe" dist/
+          Copy-Item README.md, LICENSE, TRACKTION_LICENSE.md dist/
+          Compress-Archive -Path dist/* -DestinationPath VegaProductions-DAW-Windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VegaProductions-DAW-Windows
+          path: VegaProductions-DAW-Windows.zip
+
+  macos:
+    name: macOS app (Universal)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch Tracktion Engine
+        run: |
+          git clone --filter=blob:none https://github.com/Tracktion/tracktion_engine.git te
+          cd te && git checkout $TE_COMMIT
+          git -c url."https://github.com/".insteadOf="git@github.com:" submodule update --init --depth 1 modules/juce
+      - name: Configure
+        run: cmake -B build -G Xcode -DTE_DIR=$PWD/te -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+      - name: Build
+        run: cmake --build build --config Release --target VegaDAW --parallel
+      - name: Sign and package
+        run: |
+          APP="build/VegaDAW_artefacts/Release/Vega Productions DAW.app"
+          codesign --force --deep -s - "$APP"
+          mkdir -p dist && cp -R "$APP" dist/ && cp README.md LICENSE TRACKTION_LICENSE.md dist/
+          cd dist && zip -r -y ../VegaProductions-DAW-macOS.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VegaProductions-DAW-macOS
+          path: VegaProductions-DAW-macOS.zip
+
+  release:
+    name: Publish release
+    needs: [test, windows, macos]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Collect zips
+        run: |
+          mkdir out
+          find dist -name '*.zip' -exec cp {} out/ \;
+          ls -la out
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Vega Productions DAW - build ${{ github.run_number }}
+          make_latest: true
+          body: |
+            **Windows:** download `VegaProductions-DAW-Windows.zip`, unzip anywhere and run `Vega Productions DAW.exe`.
+            **Mac:** download `VegaProductions-DAW-macOS.zip`, drag the app to Applications, then run once in Terminal:
+            `xattr -cr "/Applications/Vega Productions DAW.app"`
+          files: out/*.zip
