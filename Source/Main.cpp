@@ -4,6 +4,7 @@
 #include "ArrangeView.h"
 #include "MixerView.h"
 #include "PianoRoll.h"
+#include "Controllers.h"
 
 //==============================================================================
 class TransportBar : public juce::Component, private juce::Timer
@@ -103,7 +104,7 @@ private:
 class MainComponent : public juce::Component, public juce::MenuBarModel, private juce::Timer
 {
 public:
-    MainComponent (te::Engine& e) : engine (e), session (e), vs (session), transport (vs), arrange (vs), mixer (vs), pianoRoll (vs)
+    MainComponent (te::Engine& e) : engine (e), session (e), vs (session), hub (e, session), transport (vs), arrange (vs), mixer (vs), pianoRoll (vs)
     {
         setLookAndFeel (&lnf);
         menuBar.setModel (this);
@@ -111,10 +112,13 @@ public:
         addChildComponent (mixer); addChildComponent (pianoRoll); addChildComponent (divider);
         transport.onToggleView = [this] { showMixer (! mixer.isVisible()); };
         vs.onOpenPianoRoll = [this] { showPianoRoll (true); };
-        vs.onSelectionChanged = [this] { routeMidiToSelectedTrack(); arrange.repaint(); };
+        vs.onSelectionChanged = [this] { hub.surface.selectedID = vs.selectedTrack; routeMidiToSelectedTrack(); arrange.repaint(); };
+        hub.onSelectTrack = [this] (te::AudioTrack* t) { vs.selectTrack (t); };
+        hub.onSave = [this] { save (false); };
+        hub.autoConnect();
         pianoRoll.onClose = [this] { showPianoRoll (false); };
         session.onBeforeEditChange = [this] { mixer.clearAll(); };
-        session.onEditChanged = [this] { arrange.editChanged(); mixer.rebuild(); transport.refreshFromEdit(); setupInputs(); showPianoRoll (false); updateTitle(); };
+        session.onEditChanged = [this] { arrange.editChanged(); mixer.rebuild(); hub.editChanged(); transport.refreshFromEdit(); setupInputs(); showPianoRoll (false); updateTitle(); };
         divider.onDrag = [this] (int dy) { pianoH = juce::jlimit (160, getHeight() - 240, pianoH - dy); resized(); };
         setupInputs();
         transport.refreshFromEdit();
@@ -191,6 +195,7 @@ public:
         else if (idx == 3)
         {
             m.addItem (40, "Audio / MIDI settings..."); m.addItem (41, "Plugins (scan VST3 / AU)...");
+            m.addItem (44, juce::String ("Controllers (FLkey 2 / HUI)...") + (hub.isConnected() ? "   - connected" : ""));
             m.addItem (42, "Metronome", true, session.edit().clickTrackEnabled.get());
             m.addItem (43, "Follow playhead", true, vs.followPlayhead);
         }
@@ -225,6 +230,14 @@ public:
             case 35: showPianoRoll (! pianoRoll.isVisible()); break;
             case 40: showAudioSettings(); break;
             case 41: showPluginList(); break;
+            case 44:
+            {
+                juce::DialogWindow::LaunchOptions o;
+                o.dialogTitle = "Controllers"; o.content.setOwned (new ControllerPanel (hub));
+                o.dialogBackgroundColour = juce::Colour (0xff1e1e1e); o.resizable = true; o.useNativeTitleBar = true;
+                o.launchAsync();
+                break;
+            }
             case 42: session.edit().clickTrackEnabled = ! session.edit().clickTrackEnabled.get(); break;
             case 43: vs.followPlayhead = ! vs.followPlayhead; break;
             case 50: juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::NoIcon, "Shortcuts",
@@ -264,7 +277,12 @@ private:
     void setupInputs()
     {
         auto& dm = engine.getDeviceManager();
-        for (auto& midiIn : dm.getMidiInDevices()) { midiIn->setMonitorMode (te::InputDevice::MonitorMode::automatic); midiIn->setEnabled (true); }
+        for (auto& midiIn : dm.getMidiInDevices())
+        {
+            // controller "DAW" ports carry HUI control data, not notes - leave them to the controller script
+            if (ControllerHub::looksLikeDawPort (midiIn->getName()) || (hub.inputName.isNotEmpty() && midiIn->getName() == hub.inputName)) { midiIn->setEnabled (false); continue; }
+            midiIn->setMonitorMode (te::InputDevice::MonitorMode::automatic); midiIn->setEnabled (true);
+        }
         session.edit().getTransport().ensureContextAllocated();
         routeMidiToSelectedTrack();
     }
@@ -366,7 +384,7 @@ private:
 
     te::Engine& engine;
     VegaLookAndFeel lnf;
-    DawSession session; ViewState vs;
+    DawSession session; ViewState vs; ControllerHub hub;
     juce::MenuBarComponent menuBar;
     TransportBar transport; ArrangeView arrange; MixerView mixer; PianoRoll pianoRoll; Divider divider;
     int pianoH = 320;

@@ -1,4 +1,5 @@
 #include "../Source/DawSession.h"
+#include "../Source/HuiSurface.h"
 #include <iostream>
 static int fails = 0;
 static void check (bool ok, const juce::String& m) { std::cout << (ok ? "PASS " : "FAIL ") << m << "\n"; if (! ok) ++fails; }
@@ -74,6 +75,52 @@ int main()
         auto clip2 = s.insertAudioFile (*t, out, te::TimePosition::fromSeconds (4));
         check (clip2 != nullptr && std::abs (clip2->getPosition().getStart().inSeconds() - 4.0) < 1e-6, "audio file imported at 4 s");
         if (clip2) { DawSession::setClipFades (*clip2, 0.05s, 0.5s); DawSession::setClipWarp (*clip2, true, 3.0f); check (clip2->getPitchChange() == 3.0f && clip2->getAutoTempo(), "clip warp + pitch set"); }
+    }
+    // ---- HUI control surface (Novation FLkey 2 DAW port)
+    {
+        DawSession h (engine);
+        for (int i = 0; i < 10; ++i) h.addTrack (DawSession::TrackKind::audio);     // 12 tracks total
+        h.addTrack (DawSession::TrackKind::bus, "FX");
+        HuiSurface hui (h);
+        std::vector<juce::MidiMessage> sent; hui.send = [&] (const juce::MidiMessage& m) { sent.push_back (m); };
+        te::AudioTrack* selected = nullptr; hui.onSelectTrack = [&] (te::AudioTrack* t) { selected = t; };
+        auto cc = [&] (int n, int v) { hui.handleIncoming (juce::MidiMessage::controllerEvent (1, n, v)); };
+        auto press = [&] (int zone, int port) { cc (0x0f, zone); cc (0x2f, 0x40 | port); cc (0x0f, zone); cc (0x2f, port); };
+        auto tracks = h.getTracks (true);
+        // fader 3 to the 0 dB position
+        const int pos = juce::roundToInt (HuiSurface::faderPosFromDb (0.0f) * 16383);
+        cc (0x02, pos >> 7); cc (0x22, pos & 0x7f);
+        check (std::abs (tracks[2]->getVolumePlugin()->getVolumeDb()) < 0.3f, "HUI fader 3 sets track 3 volume (" + juce::String (tracks[2]->getVolumePlugin()->getVolumeDb(), 2) + " dB)");
+        cc (0x02, 0); cc (0x22, 0);
+        check (tracks[2]->getVolumePlugin()->getVolumeDb() < -60.0f, "HUI fader down = silent");
+        press (1, 2);  check (tracks[1]->isMuted (false), "HUI pad: mute strip 2");
+        press (1, 3);  check (tracks[1]->isSolo (false), "HUI pad: solo strip 2");
+        press (4, 1);  check (selected == tracks[4], "HUI fader button selects track 5");
+        cc (0x40, 0x45); check (tracks[0]->getVolumePlugin()->getPan() > 0.05f, "HUI encoder 1 pans right (" + juce::String (tracks[0]->getVolumePlugin()->getPan(), 2) + ")");
+        press (0x0a, 3); check (hui.bankStart == 8 && hui.trackForStrip (0) == tracks[8], "HUI bank right shows tracks 9-16");
+        cc (0x00, pos >> 7); cc (0x20, pos & 0x7f);
+        check (std::abs (tracks[8]->getVolumePlugin()->getVolumeDb()) < 0.3f, "after banking, fader 1 controls track 9");
+        press (0x0a, 1); check (hui.bankStart == 0, "HUI bank left back to tracks 1-8");
+        press (0x0b, 7); auto* bus = h.getBuses()[0];
+        for (int k = 0; k < 10; ++k) cc (0x40, 0x48);
+        check (h.findSend (*tracks[0], *bus) != nullptr && h.findSend (*tracks[0], *bus)->getGainDb() > -30.0f, "Send A mode: encoder creates and raises a send to the first bus");
+        press (0x0b, 2);
+        press (0x0f, 3); check (h.edit().getTransport().looping.get(), "HUI loop button toggles loop");
+        press (0x0e, 2); check (h.edit().getTransport().getPosition().inSeconds() >= h.barLength().inSeconds() - 0.01, "HUI fast-forward jumps a bar");
+        press (0x0f, 0); check (h.edit().getTransport().getPosition().inSeconds() < 0.01, "HUI return-to-zero");
+        // feedback
+        sent.clear(); hui.updateFeedback (true);
+        bool faderFb = false, muteLed = false, nameSx = false;
+        for (size_t i = 0; i + 1 < sent.size(); ++i)
+        {
+            auto& m = sent[i];
+            if (m.isController() && m.getControllerNumber() == 0x0c && m.getControllerValue() == 1 && sent[i + 1].isController() && sent[i + 1].getControllerValue() == (0x40 | 2)) muteLed = true;
+            if (m.isController() && m.getControllerNumber() == 0x01 && sent[i + 1].isController() && sent[i + 1].getControllerNumber() == 0x21) faderFb = true;
+            if (m.isSysEx() && m.getSysExDataSize() == 11 && m.getSysExData()[5] == 0x10) nameSx = true;
+        }
+        check (faderFb && muteLed && nameSx, "HUI feedback: motor-fader positions, mute LED and track names are sent");
+        sent.clear(); hui.updateFeedback();
+        check (sent.empty(), "HUI feedback only sends changes (" + juce::String ((int) sent.size()) + " msgs when idle)");
     }
     out.deleteFile(); proj.deleteFile();
     std::cout << (fails == 0 ? "ALL PASSED" : "FAILURES: " + std::to_string (fails)) << "\n";

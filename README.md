@@ -29,8 +29,29 @@ First run: **Options > Audio / MIDI settings** (pick ASIO / WASAPI on Windows, C
 
 **Files** — projects saved as `.vegaproj`; export the mixdown (or just the loop range) to 24-bit WAV.
 
+## Controllers: Novation FLkey 2 (and other HUI surfaces)
+The DAW has a built-in **HUI controller script**, the protocol the FLkey 2 uses for DAWs other than FL Studio.
+
+1. Plug in the FLkey 2 49 and start the DAW. It connects automatically to the keyboard's **DAW port**
+   (`MIDIIN2 / MIDIOUT2 (FLkey 2 49)` on Windows, `FLkey 2 49 DAW Out / DAW In` on Mac).
+   Check **Options > Controllers (FLkey 2 / HUI)** — it says CONNECTED, and every button/fader you touch appears in the MIDI monitor.
+2. The keys, wheels and drum pads (in Drum mode) use the normal **FLkey 2 49 MIDI** port and play whichever instrument track is selected —
+   pads send General-MIDI drum notes, so they play Vega Productions Drums directly.
+
+| FLkey 2 control | Vega Productions DAW |
+|---|---|
+| Faders 1–8 | Volume of 8 tracks (motorless faders jump to the value) |
+| Fader buttons | Select track (MIDI keyboard follows the selection) |
+| Encoders | Pan — or Send A–E level in Sends mode (turning up a send creates it to that bus) |
+| Pads (DAW mode) | Mute / Solo |
+| Bank / Channel ◀ ▶ | Move the 8-track window / one track |
+| Play, Stop, Record, Loop | Transport (Stop when stopped = return to start) |
+| Track/cursor buttons | Previous / next track, playhead by a beat |
+
+Feedback goes back to the controller: fader values, mute/solo/select/arm lights, encoder positions, 4-letter track names and transport lights.
+
 ## Roadmap
-- **Stage 2:** automation lanes, MIDI-learn, Mackie Control (motorised faders), more clip editing (warp markers, transient editing), track freeze.
+- **Stage 2:** ✅ HUI / FLkey 2 controller script. Next: automation lanes, MIDI-learn, Mackie Control (MCU), warp markers, track freeze.
 - **Stage 3:** Ableton Push / controller scripts, routing matrix view, comping, video.
 
 AAX is not supported: Avid only allows AAX plugins inside Pro Tools.

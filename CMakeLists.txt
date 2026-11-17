@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(VegaDAW VERSION 0.1.0)
+project(VegaDAW VERSION 0.2.0)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
@@ -32,7 +32,9 @@ target_sources(VegaDAW PRIVATE
     Source/DawSession.cpp
     Source/ArrangeView.cpp
     Source/PianoRoll.cpp
-    Source/MixerView.cpp)
+    Source/MixerView.cpp
+    Source/HuiSurface.cpp
+    Source/Controllers.cpp)
 
 target_compile_definitions(VegaDAW PRIVATE
     JUCE_PLUGINHOST_AU=1
@@ -71,7 +73,7 @@ endif()
 option(VEGA_TESTS "Build the headless test app" OFF)
 if (VEGA_TESTS)
     juce_add_console_app(VegaDAWTest PRODUCT_NAME "VegaDAWTest")
-    target_sources(VegaDAWTest PRIVATE tests/DawTest.cpp Source/DawSession.cpp)
+    target_sources(VegaDAWTest PRIVATE tests/DawTest.cpp Source/DawSession.cpp Source/HuiSurface.cpp)
     target_compile_definitions(VegaDAWTest PRIVATE
         JUCE_PLUGINHOST_AU=1 JUCE_PLUGINHOST_VST3=1 JUCE_MODAL_LOOPS_PERMITTED=1 JUCE_STRICT_REFCOUNTEDPOINTER=1
         JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 TRACKTION_ENABLE_TIMESTRETCH_SOUNDTOUCH=1 TRACKTION_ENABLE_CONTROL_SURFACES=1 VEGA_HEADLESS=1)
