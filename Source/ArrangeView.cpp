@@ -26,6 +26,19 @@ public:
         input.onClick = [this] { inputMenu(); };
         const bool bus = DawSession::kindOf (t) == DawSession::TrackKind::bus;
         arm.setVisible (! bus); input.setVisible (! bus);
+        // plug-in access straight from the track: INST opens the instrument, FX lists everything on the track
+        setup (instBtn, "INST", VegaColours::gold); setup (fxBtn, "FX", VegaColours::accentDim);
+        instBtn.setTooltip ("Open this track's instrument (right-click to change it)");
+        fxBtn.setTooltip ("Open or add plug-ins on this track");
+        instBtn.setVisible (DawSession::kindOf (t) == DawSession::TrackKind::midi);
+        instBtn.onClick = [this]
+        {
+            owner.vs.selectTrack (track.get());
+            auto* first = track->pluginList[0];
+            if (first != nullptr && first->isSynth() && ! juce::ModifierKeys::currentModifiers.isPopupMenu()) dawui::openPlugin (first);
+            else dawui::pluginChainMenu (owner.vs.session, *track, &instBtn, [this] { repaint(); });
+        };
+        fxBtn.onClick = [this] { owner.vs.selectTrack (track.get()); dawui::pluginChainMenu (owner.vs.session, *track, &fxBtn, [this] { refresh(); }); };
         vol.setSliderStyle (juce::Slider::LinearBar); vol.setRange (-60.0, 6.0, 0.1); vol.setSkewFactorFromMidPoint (-12.0);
         vol.setTextValueSuffix (" dB"); vol.setColour (juce::Slider::trackColourId, DawSession::trackColour (t).withAlpha (0.45f));
         vol.onValueChange = [this] { if (auto vp = track->getVolumePlugin()) vp->setVolumeDb ((float) vol.getValue()); };
@@ -38,6 +51,10 @@ public:
         mute.setToggleState (track->isMuted (false), juce::dontSendNotification);
         solo.setToggleState (track->isSolo (false), juce::dontSendNotification);
         arm.setToggleState (isArmed(), juce::dontSendNotification);
+        {
+            int n = 0; for (auto* p : owner.vs.session.getInsertPlugins (*track)) if (! p->isSynth()) ++n;
+            fxBtn.setButtonText (n > 0 ? "FX " + juce::String (n) : "FX");
+        }
         if (auto vp = track->getVolumePlugin()) if (! vol.isMouseButtonDown()) vol.setValue (vp->getVolumeDb(), juce::dontSendNotification);
         if (name.getText() != track->getName() && ! name.isBeingEdited()) name.setText (track->getName(), juce::dontSendNotification);
         repaint();
@@ -58,7 +75,10 @@ public:
     }
     void resized() override
     {
-        name.setBounds (8, 4, getWidth() - 16, 22);
+        auto top = juce::Rectangle<int> (8, 4, getWidth() - 16, 22);
+        fxBtn.setBounds (top.removeFromRight (38).reduced (0, 1)); top.removeFromRight (3);
+        if (instBtn.isVisible()) { instBtn.setBounds (top.removeFromRight (40).reduced (0, 1)); top.removeFromRight (3); }
+        name.setBounds (top);
         auto row = juce::Rectangle<int> (10, 42, getWidth() - 20, 22);
         for (auto* b : { &mute, &solo, &arm, &input }) { if (! b->isVisible()) continue; b->setBounds (row.removeFromLeft (b == &input ? 34 : 26)); row.removeFromLeft (4); }
         vol.setBounds (row.withTrimmedLeft (4));
@@ -186,7 +206,7 @@ private:
         });
     }
     ArrangeView& owner;
-    juce::Label name; juce::TextButton mute, solo, arm, input; juce::Slider vol;
+    juce::Label name; juce::TextButton mute, solo, arm, input, instBtn, fxBtn; juce::Slider vol;
     int dragStartY = 0; bool resizing = false;
 };
 
@@ -764,4 +784,11 @@ void ArrangeView::filesDropped (const juce::StringArray& files, int x, int y)
         target = nullptr;
     }
     rebuildHeaders();
+}
+
+void ArrangeView::itemDropped (const SourceDetails& d)
+{
+    auto p = lanes->getLocalPoint (this, d.localPosition.toInt());
+    auto* t = p.y >= 0 ? trackAtY (p.y) : nullptr;
+    if (vs.onPluginDropped) vs.onPluginDropped (d.description, t);
 }

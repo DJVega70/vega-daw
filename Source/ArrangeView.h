@@ -2,7 +2,7 @@
 #include "DawUI.h"
 
 /** Timeline: ruler, track headers and clip lanes */
-class ArrangeView : public juce::Component, public juce::FileDragAndDropTarget, private juce::Timer, private juce::ValueTree::Listener, private juce::ScrollBar::Listener
+class ArrangeView : public juce::Component, public juce::FileDragAndDropTarget, public juce::DragAndDropTarget, private juce::Timer, private juce::ValueTree::Listener, private juce::ScrollBar::Listener
 {
 public:
     explicit ArrangeView (ViewState&);
@@ -15,6 +15,8 @@ public:
     bool keyPressed (const juce::KeyPress&) override;
     bool isInterestedInFileDrag (const juce::StringArray&) override { return true; }
     void filesDropped (const juce::StringArray&, int x, int y) override;
+    bool isInterestedInDragSource (const SourceDetails& d) override { return d.description.toString().startsWith ("vegaplugin:"); }
+    void itemDropped (const SourceDetails& d) override;
     void deleteSelectedClip();
     void duplicateSelectedClip();
     void splitSelectedAtPlayhead();

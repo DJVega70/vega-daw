@@ -2,7 +2,7 @@
 #include "DawUI.h"
 
 /** Console: one strip per track and bus, plus the master */
-class MixerView : public juce::Component, private juce::Timer
+class MixerView : public juce::Component, public juce::DragAndDropTarget, private juce::Timer
 {
 public:
     explicit MixerView (ViewState&);
@@ -12,6 +12,8 @@ public:
     void resized() override;
     void paint (juce::Graphics&) override;
     class Strip;
+    bool isInterestedInDragSource (const SourceDetails& d) override { return d.description.toString().startsWith ("vegaplugin:"); }
+    void itemDropped (const SourceDetails& d) override;
 private:
     void timerCallback() override;
     ViewState& vs;

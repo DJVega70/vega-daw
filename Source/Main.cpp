@@ -5,6 +5,7 @@
 #include "MixerView.h"
 #include "PianoRoll.h"
 #include "Controllers.h"
+#include "PluginBrowser.h"
 
 //==============================================================================
 class TransportBar : public juce::Component, private juce::Timer
@@ -18,7 +19,7 @@ public:
         };
         btn (home, juce::String::fromUTF8 ("\xe2\x8f\xae")); btn (play, juce::String::fromUTF8 ("\xe2\x96\xb6")); btn (stop, juce::String::fromUTF8 ("\xe2\x96\xa0"));
         btn (rec, juce::String::fromUTF8 ("\xe2\x97\x8f"), juce::Colour (0xffe04848)); btn (loop, "LOOP"); btn (click, "CLICK");
-        btn (view, "MIXER"); btn (addAudio, "+ AUDIO"); btn (addInst, "+ INSTRUMENT"); btn (addBus, "+ BUS");
+        btn (view, "MIXER"); btn (browse, "PLUGINS"); btn (addAudio, "+ AUDIO"); btn (addInst, "+ INSTRUMENT"); btn (addBus, "+ BUS");
         home.onClick = [this] { vs.edit().getTransport().setPosition (0s); };
         play.onClick = [this] { auto& t = vs.edit().getTransport(); if (t.isPlaying()) t.stop (false, false); else t.play (false); };
         stop.onClick = [this] { auto& t = vs.edit().getTransport(); if (t.isPlaying()) t.stop (false, false); else t.setPosition (0s); };
@@ -41,7 +42,8 @@ public:
         addAndMakeVisible (snap);
         startTimerHz (20);
     }
-    std::function<void()> onToggleView;
+    std::function<void()> onToggleView, onToggleBrowser;
+    void setBrowserShown (bool b) { browse.setToggleState (b, juce::dontSendNotification); }
     bool barSnap = false;
     void paint (juce::Graphics& g) override
     {
@@ -72,6 +74,8 @@ public:
         cpuArea = { x + 4, y, 60, h }; x += 74;
         view.setBounds (getWidth() - 96, y, 88, h);
         addBus.setBounds (getWidth() - 166, y, 66, h); addInst.setBounds (getWidth() - 280, y, 110, h); addAudio.setBounds (getWidth() - 362, y, 78, h);
+        browse.setBounds (getWidth() - 452, y, 82, h);
+        browse.onClick = [this] { if (onToggleBrowser) onToggleBrowser(); };
         view.onClick = [this] { if (onToggleView) onToggleView(); };
     }
     void setViewLabel (bool mixerShowing) { view.setButtonText (mixerShowing ? "ARRANGE" : "MIXER"); }
@@ -95,22 +99,35 @@ private:
         repaint (display); repaint (cpuArea);
     }
     ViewState& vs;
-    juce::TextButton home, play, stop, rec, loop, click, view, addAudio, addInst, addBus;
+    juce::TextButton home, play, stop, rec, loop, click, view, addAudio, addInst, addBus, browse;
     juce::Slider tempo; juce::ComboBox sig, snap;
     juce::Rectangle<int> display, cpuArea;
 };
 
 //==============================================================================
-class MainComponent : public juce::Component, public juce::MenuBarModel, private juce::Timer
+class MainComponent : public juce::Component, public juce::MenuBarModel, public juce::DragAndDropContainer, private juce::Timer
 {
 public:
-    MainComponent (te::Engine& e) : engine (e), session (e), vs (session), hub (e, session), transport (vs), arrange (vs), mixer (vs), pianoRoll (vs)
+    MainComponent (te::Engine& e) : engine (e), session (e), vs (session), hub (e, session), transport (vs), arrange (vs), mixer (vs), pianoRoll (vs), browser (vs)
     {
         setLookAndFeel (&lnf);
         menuBar.setModel (this);
         addAndMakeVisible (menuBar); addAndMakeVisible (transport); addAndMakeVisible (arrange);
         addChildComponent (mixer); addChildComponent (pianoRoll); addChildComponent (divider);
         transport.onToggleView = [this] { showMixer (! mixer.isVisible()); };
+        addAndMakeVisible (browser); transport.setBrowserShown (true);
+        transport.onToggleBrowser = [this] { showBrowser (! browser.isVisible()); };
+        browser.onLoad = [this] (const PluginBrowser::Item& it, te::AudioTrack* t) { loadFromBrowser (it, t); };
+        vs.onPluginDropped = [this] (const juce::var& d, te::AudioTrack* t)
+        {
+            if (auto* it = browser.itemForDragDescription (d)) { loadFromBrowser (*it, t, true); return true; }
+            return false;
+        };
+        // pick up newly installed plug-ins in the background; first run does a full visible scan
+        juce::Timer::callAfterDelay (1500, [this, sp = juce::Component::SafePointer<MainComponent> (this)]
+        {
+            if (sp != nullptr) browser.startScan (engine.getPluginManager().knownPluginList.getNumTypes() > 0);
+        });
         vs.onOpenPianoRoll = [this] { showPianoRoll (true); };
         vs.onSelectionChanged = [this] { hub.surface.selectedID = vs.selectedTrack; routeMidiToSelectedTrack(); arrange.repaint(); };
         hub.onSelectTrack = [this] (te::AudioTrack* t) { vs.selectTrack (t); };
@@ -153,6 +170,7 @@ public:
             pianoRoll.setBounds (r.removeFromBottom (pianoH));
             divider.setBounds (r.removeFromBottom (6));
         }
+        if (browser.isVisible()) browser.setBounds (r.removeFromLeft (browserW));
         arrange.setBounds (r); mixer.setBounds (r);
     }
     bool keyPressed (const juce::KeyPress& k) override
@@ -163,6 +181,7 @@ public:
         if (k.getKeyCode() == 'R' && k.getModifiers().isAnyModifierKeyDown() == false) { if (tr.isRecording()) tr.stop (true, false); else tr.record (false); return true; }
         if (k.getKeyCode() == 'L' && ! k.getModifiers().isAnyModifierKeyDown()) { tr.looping = ! tr.looping.get(); return true; }
         if (k == juce::KeyPress (juce::KeyPress::tabKey)) { showMixer (! mixer.isVisible()); return true; }
+        if (k.getKeyCode() == 'B' && ! k.getModifiers().isAnyModifierKeyDown()) { showBrowser (! browser.isVisible()); return true; }
         if (k == juce::KeyPress ('z', cmd, 0)) { session.edit().getUndoManager().undo(); return true; }
         if (k == juce::KeyPress ('z', cmd | juce::ModifierKeys::shiftModifier, 0) || k == juce::KeyPress ('y', cmd, 0)) { session.edit().getUndoManager().redo(); return true; }
         if (k == juce::KeyPress ('s', cmd, 0)) { save (false); return true; }
@@ -191,10 +210,14 @@ public:
             m.addItem (30, "Add audio track"); m.addItem (31, "Add instrument track"); m.addItem (32, "Add bus");
             m.addSeparator(); m.addItem (33, "Delete selected track", vs.getSelectedTrack() != nullptr);
             m.addItem (34, "Show mixer   Tab", true, mixer.isVisible()); m.addItem (35, "Show piano roll", true, pianoRoll.isVisible());
+            m.addItem (36, "Show plug-in browser   B", true, browser.isVisible());
+            m.addSeparator();
+            m.addItem (37, "Open instrument of selected track", vs.getSelectedTrack() != nullptr);
+            m.addItem (38, "Plug-ins on selected track...", vs.getSelectedTrack() != nullptr);
         }
         else if (idx == 3)
         {
-            m.addItem (40, "Audio / MIDI settings..."); m.addItem (41, "Plugins (scan VST3 / AU)...");
+            m.addItem (40, "Audio / MIDI settings..."); m.addItem (41, "Scan for new plug-ins"); m.addItem (45, "Advanced plug-in list...");
             m.addItem (44, juce::String ("Controllers (FLkey 2 / HUI)...") + (hub.isConnected() ? "   - connected" : ""));
             m.addItem (42, "Metronome", true, session.edit().clickTrackEnabled.get());
             m.addItem (43, "Follow playhead", true, vs.followPlayhead);
@@ -229,7 +252,11 @@ public:
             case 34: showMixer (! mixer.isVisible()); break;
             case 35: showPianoRoll (! pianoRoll.isVisible()); break;
             case 40: showAudioSettings(); break;
-            case 41: showPluginList(); break;
+            case 41: showBrowser (true); browser.startScan (false); break;
+            case 45: showPluginList(); break;
+            case 36: showBrowser (! browser.isVisible()); break;
+            case 37: if (auto* t = vs.getSelectedTrack()) { auto* f = t->pluginList[0]; if (f != nullptr && f->isSynth()) dawui::openPlugin (f); else dawui::pluginChainMenu (session, *t, &transport); } break;
+            case 38: if (auto* t = vs.getSelectedTrack()) dawui::pluginChainMenu (session, *t, &transport, [this] { mixer.rebuild(); }); break;
             case 44:
             {
                 juce::DialogWindow::LaunchOptions o;
@@ -241,7 +268,7 @@ public:
             case 42: session.edit().clickTrackEnabled = ! session.edit().clickTrackEnabled.get(); break;
             case 43: vs.followPlayhead = ! vs.followPlayhead; break;
             case 50: juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::NoIcon, "Shortcuts",
-                        "Space  play / stop\nR  record\nL  loop on/off\nHome  go to start\nTab  arrange / mixer\nCtrl+Z / Ctrl+Shift+Z  undo / redo\nCtrl+S  save\nCtrl+E  split clip at playhead\nCtrl+D  duplicate clip\nDel  delete clip\n\n"
+                        "Space  play / stop\nR  record\nL  loop on/off\nHome  go to start\nTab  arrange / mixer\nB  plug-in browser\nCtrl+Z / Ctrl+Shift+Z  undo / redo\nCtrl+S  save\nCtrl+E  split clip at playhead\nCtrl+D  duplicate clip\nDel  delete clip\n\n"
                         "Arrange: drag clips to move, drag edges to trim, drag the top corners of audio clips for fades, Alt-drag to copy, Shift for no snap.\n"
                         "Ctrl+wheel zoom, Shift+wheel scroll. Double-click an instrument track to create a MIDI clip.\n"
                         "Ruler: click to move the playhead, drag the top strip (or Shift-drag) to set the loop.\n"
@@ -272,6 +299,41 @@ private:
         if (onTitle) onTitle ((f == juce::File() ? juce::String ("Untitled") : f.getFileNameWithoutExtension()) + (session.hasUnsavedChanges() ? " *" : "") + "  -  Vega Productions DAW");
     }
     void showMixer (bool m) { mixer.setVisible (m); arrange.setVisible (! m); transport.setViewLabel (m); if (m) mixer.rebuild(); }
+    void showBrowser (bool show) { browser.setVisible (show); transport.setBrowserShown (show); resized(); }
+
+    /** Load a browser item: instruments go on the target / selected instrument track (or a new one),
+        effects go at the end of the target / selected track's chain. The plug-in window opens right away. */
+    void loadFromBrowser (const PluginBrowser::Item& it, te::AudioTrack* target, bool dropped = false)
+    {
+        auto* t = target != nullptr ? target : (dropped ? nullptr : vs.getSelectedTrack());
+        te::Plugin::Ptr p;
+        if (it.instrument)
+        {
+            if (t == nullptr || DawSession::kindOf (*t) != DawSession::TrackKind::midi)
+                t = session.addTrack (DawSession::TrackKind::midi, it.name);
+            if (t == nullptr) return;
+            p = it.desc ? session.setInstrument (*t, {}, &*it.desc) : session.setInstrument (*t, it.builtInType);
+        }
+        else
+        {
+            if (t == nullptr)
+            {
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, it.name,
+                    "Select a track first (click its name), or drag the effect onto a track or mixer strip.");
+                return;
+            }
+            p = it.desc ? session.addPlugin (*t, {}, &*it.desc) : session.addPlugin (*t, it.builtInType);
+        }
+        vs.selectTrack (t);
+        if (p == nullptr)
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, it.name, "Couldn't load this plug-in.");
+            return;
+        }
+        arrange.rebuildHeaders(); mixer.rebuild();
+        dawui::openPlugin (p.get());
+    }
+
     void showPianoRoll (bool show) { pianoRoll.setVisible (show); divider.setVisible (show); resized(); if (show) pianoRoll.grabKeyboardFocus(); }
 
     void setupInputs()
@@ -386,7 +448,8 @@ private:
     VegaLookAndFeel lnf;
     DawSession session; ViewState vs; ControllerHub hub;
     juce::MenuBarComponent menuBar;
-    TransportBar transport; ArrangeView arrange; MixerView mixer; PianoRoll pianoRoll; Divider divider;
+    TransportBar transport; ArrangeView arrange; MixerView mixer; PianoRoll pianoRoll; PluginBrowser browser; Divider divider;
+    int browserW = 250;
     int pianoH = 320;
     std::unique_ptr<juce::FileChooser> chooser;
 };

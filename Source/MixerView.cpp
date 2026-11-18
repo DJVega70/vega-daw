@@ -4,6 +4,7 @@ class MixerView::Strip : public juce::Component
 {
 public:
     static constexpr int W = 128;
+    te::AudioTrack* getTrack() const { return track.get(); }
     Strip (ViewState& v, te::AudioTrack* t) : vs (v), track (t)
     {
         fader.setSliderStyle (juce::Slider::LinearVertical); fader.setRange (-60.0, 6.0, 0.1); fader.setSkewFactorFromMidPoint (-10.0);
@@ -25,7 +26,16 @@ public:
             addAndMakeVisible (output);
             if (DawSession::kindOf (*track) == DawSession::TrackKind::midi)
             {
-                instrument.onClick = [this] { chooseInstrument(); };
+                instrument.onClick = [this]
+                {
+                    auto* first = track->pluginList[0];
+                    if (first != nullptr && first->isSynth() && ! juce::ModifierKeys::currentModifiers.isPopupMenu()) dawui::openPlugin (first);
+                    else chooseInstrument();
+                };
+                instrument.setTooltip ("Click to open the instrument. Use the arrow to change it.");
+                swapInst.setButtonText (juce::String::fromUTF8 ("\xe2\x96\xbe")); swapInst.setTooltip ("Change instrument");
+                swapInst.onClick = [this] { chooseInstrument(); };
+                addAndMakeVisible (swapInst);
                 addAndMakeVisible (instrument);
             }
             addFx.setButtonText ("+ FX"); addFx.onClick = [this] { chooseFx(); }; addAndMakeVisible (addFx);
@@ -50,7 +60,7 @@ public:
             b->setColour (juce::TextButton::textColourOffId, p->isEnabled() ? VegaColours::text : VegaColours::textDim);
             b->onClick = [this, pp = te::Plugin::Ptr (p), b]
             {
-                if (juce::ModifierKeys::currentModifiers.isPopupMenu()) slotMenu (pp, b); else pp->showWindowExplicitly();
+                if (juce::ModifierKeys::currentModifiers.isPopupMenu()) slotMenu (pp, b); else dawui::openPlugin (pp.get());
             };
             b->addMouseListener (this, false);
             addAndMakeVisible (b);
@@ -127,7 +137,7 @@ public:
     void resized() override
     {
         int y = 32;
-        if (instrument.isVisible()) { instrument.setBounds (6, y, getWidth() - 12, 22); y += 28; }
+        if (instrument.isVisible()) { instrument.setBounds (6, y, getWidth() - 36, 22); swapInst.setBounds (getWidth() - 28, y, 22, 22); y += 28; }
         y += 12; insertsY = y;
         for (auto* s : slots) { s->setBounds (6, y, getWidth() - 12, 20); y += 22; }
         if (track != nullptr) { addFx.setBounds (6, y, getWidth() - 12, 20); y += 34; }
@@ -162,8 +172,9 @@ private:
     {
         dawui::choosePlugin (vs.edit().engine, true, &instrument, [this, t = track] (juce::String type, std::optional<juce::PluginDescription> d)
         {
-            if (d) vs.session.setInstrument (*t, {}, &*d); else vs.session.setInstrument (*t, type);
+            auto p = d ? vs.session.setInstrument (*t, {}, &*d) : vs.session.setInstrument (*t, type);
             rebuildSlots();
+            dawui::openPlugin (p.get());
         });
     }
     void chooseFx()
@@ -172,7 +183,7 @@ private:
         {
             auto p = d ? vs.session.addPlugin (*t, {}, &*d) : vs.session.addPlugin (*t, type);
             rebuildSlots();
-            if (p) p->showWindowExplicitly();
+            dawui::openPlugin (p.get());
         });
     }
     void chooseSend()
@@ -203,7 +214,7 @@ private:
         m.addSeparator(); m.addItem (9, "Remove");
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target), [this, p] (int r)
         {
-            if (r == 1) p->showWindowExplicitly();
+            if (r == 1) dawui::openPlugin (p.get());
             else if (r == 2) p->setEnabled (! p->isEnabled());
             else if (r == 3 || r == 4)
             {
@@ -217,7 +228,7 @@ private:
         });
     }
     ViewState& vs;
-    juce::Slider fader, pan; juce::TextButton mute, solo, instrument, addFx, addSend; juce::ComboBox output;
+    juce::Slider fader, pan; juce::TextButton mute, solo, instrument, addFx, addSend, swapInst; juce::ComboBox output;
     juce::OwnedArray<juce::TextButton> slots; juce::OwnedArray<SendRow> sends; juce::Array<te::AudioTrack*> outBuses;
     te::LevelMeasurer::Client client; te::LevelMeasurer* measurer = nullptr;
     bool masterAdded = false; te::EditPlaybackContext* masterCtx = nullptr;
@@ -263,4 +274,12 @@ void MixerView::timerCallback()
     if (layout != lastLayout) { lastLayout = layout; rebuild(); }
     for (auto* s : strips) s->refresh();
     master->refresh();
+}
+
+void MixerView::itemDropped (const SourceDetails& d)
+{
+    te::AudioTrack* t = nullptr;
+    const auto sp = localPointToGlobal (d.localPosition.toInt());
+    for (auto* s : strips) if (s->getScreenBounds().contains (sp)) t = s->getTrack();
+    if (vs.onPluginDropped) vs.onPluginDropped (d.description, t);
 }

@@ -12,6 +12,7 @@ struct ViewState
     te::EditItemID selectedClip, selectedTrack;
     bool followPlayhead = true;
     std::function<void()> onSelectionChanged, onOpenPianoRoll;
+    std::function<bool (const juce::var& dragDescription, te::AudioTrack* target)> onPluginDropped;   // plug-in dragged from the browser
 
     te::Edit& edit() { return session.edit(); }
     te::TempoSequence& tempo() { return session.edit().tempoSequence; }
@@ -78,6 +79,44 @@ inline void choosePlugin (te::Engine& engine, bool instruments, juce::Component*
     });
 }
 
+/** Open a plug-in's window and bring it to the front */
+inline void openPlugin (te::Plugin* p)
+{
+    if (p == nullptr) return;
+    p->showWindowExplicitly();
+    if (auto* w = p->windowState != nullptr ? p->windowState->pluginWindow.get() : nullptr) { w->setVisible (true); w->toFront (true); }
+}
+
+/** Menu of everything on a track: open the instrument or any effect, change the instrument, add effects */
+inline void pluginChainMenu (DawSession& session, te::AudioTrack& track, juce::Component* target, std::function<void()> changed = nullptr)
+{
+    juce::PopupMenu m;
+    auto plugins = session.getInsertPlugins (track);
+    const bool inst = DawSession::kindOf (track) == DawSession::TrackKind::midi;
+    m.addSectionHeader ("Click to open");
+    for (int i = 0; i < plugins.size(); ++i)
+        m.addItem (1 + i, (plugins[i]->isSynth() ? juce::String ("Instrument:  ") : juce::String ("Effect:  ")) + plugins[i]->getName() + (plugins[i]->isEnabled() ? "" : "  (bypassed)"));
+    if (plugins.isEmpty()) m.addItem (-1, "No plug-ins on this track yet", false);
+    m.addSeparator();
+    if (inst) m.addItem (900, "Change instrument...");
+    m.addItem (901, "Add effect...");
+    te::AudioTrack::Ptr t (&track);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target), [&session, t, plugins, target, changed] (int r)
+    {
+        if (t == nullptr) return;
+        if (r >= 1 && r <= plugins.size()) openPlugin (plugins[r - 1]);
+        else if (r == 900 || r == 901)
+            choosePlugin (session.edit().engine, r == 900, target, [&session, t, r, changed] (juce::String type, std::optional<juce::PluginDescription> d)
+            {
+                te::Plugin::Ptr p;
+                if (r == 900) p = d ? session.setInstrument (*t, {}, &*d) : session.setInstrument (*t, type);
+                else p = d ? session.addPlugin (*t, {}, &*d) : session.addPlugin (*t, type);
+                openPlugin (p.get());
+                if (changed) changed();
+            });
+    });
+}
+
 /** Simple slider-per-parameter editor for built-in plugins (which have no GUI of their own) */
 class GenericEditor : public te::Plugin::EditorComponent, private juce::Timer
 {
@@ -87,9 +126,13 @@ public:
         for (auto* param : plugin.getAutomatableParameters())
         {
             auto* row = rows.add (new Row (*param));
-            addAndMakeVisible (row->slider); addAndMakeVisible (row->label);
+            inner.addAndMakeVisible (row->slider); inner.addAndMakeVisible (row->label);
         }
-        setSize (420, std::max (60, rows.size() * 34 + 20));
+        view.setViewedComponent (&inner, false); view.setScrollBarsShown (true, false);
+        addAndMakeVisible (view);
+        const int full = std::max (60, rows.size() * 34 + 20);
+        inner.setSize (420, full);
+        setSize (420 + (full > 640 ? view.getScrollBarThickness() : 0), std::min (full, 640));   // long lists scroll
         startTimerHz (15);
     }
     bool allowWindowResizing() override { return false; }
@@ -97,8 +140,9 @@ public:
     void paint (juce::Graphics& g) override { g.fillAll (VegaColours::background); }
     void resized() override
     {
+        view.setBounds (getLocalBounds());
         int y = 10;
-        for (auto* r : rows) { r->label.setBounds (10, y, 140, 26); r->slider.setBounds (150, y, getWidth() - 160, 26); y += 34; }
+        for (auto* r : rows) { r->label.setBounds (10, y, 140, 26); r->slider.setBounds (150, y, inner.getWidth() - 160, 26); y += 34; }
     }
 private:
     struct Row
@@ -124,6 +168,7 @@ private:
         for (auto* r : rows) if (! r->slider.isMouseButtonDown()) r->slider.setValue (r->param.getCurrentValue(), juce::dontSendNotification);
     }
     te::Plugin& plugin; juce::OwnedArray<Row> rows;
+    juce::Viewport view; juce::Component inner;
 };
 
 inline juce::String formatBarsBeats (te::Edit& edit, te::TimePosition t)

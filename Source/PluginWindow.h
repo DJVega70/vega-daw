@@ -119,8 +119,9 @@ PluginWindow::PluginWindow (te::Plugin& plug)
 
     setBoundsConstrained (getLocalBounds() + plugin.windowState->choosePositionForPluginWindow());
 
+    // plug-in windows float above the DAW (like FL Studio) so they never get lost behind it
+    setAlwaysOnTop (true);
     #if JUCE_LINUX
-     setAlwaysOnTop (true);
      addToDesktop();
     #endif
 
@@ -233,9 +234,41 @@ public:
     std::unique_ptr<Component> createPluginWindow (te::PluginWindowState& pws) override
     {
         if (auto ws = dynamic_cast<te::Plugin::WindowState*> (&pws))
-            return PluginWindow::create (ws->plugin);
+        {
+            auto w = PluginWindow::create (ws->plugin);
+            if (w == nullptr)
+            {
+                juce::String why;
+                if (auto* ext = dynamic_cast<te::ExternalPlugin*> (&ws->plugin))
+                {
+                    why = ext->getLoadError();
+                    if (why.isEmpty() && ext->getAudioPluginInstance() == nullptr)
+                    {   // still loading in the background: open it as soon as it's ready
+                        retryOpen (te::Plugin::Ptr (&ws->plugin), 40);
+                        return {};
+                    }
+                }
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, ws->plugin.getName(),
+                    "Couldn't open this plug-in's window." + (why.isNotEmpty() ? "\n\n" + why : juce::String())
+                    + "\n\nIf it's a 32-bit or VST2-only plug-in, it can't be loaded - use its VST3 version.");
+            }
+            return w;
+        }
 
         return {};
+    }
+
+    static void retryOpen (te::Plugin::Ptr p, int triesLeft)
+    {
+        juce::Timer::callAfterDelay (250, [p, triesLeft]
+        {
+            auto* ext = dynamic_cast<te::ExternalPlugin*> (p.get());
+            if (ext == nullptr || p->windowState == nullptr) return;
+            if (ext->getAudioPluginInstance() != nullptr) { p->showWindowExplicitly(); return; }
+            if (triesLeft > 0 && ext->getLoadError().isEmpty()) retryOpen (p, triesLeft - 1);
+            else juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, p->getName(),
+                     "This plug-in didn't finish loading." + (ext->getLoadError().isNotEmpty() ? "\n\n" + ext->getLoadError() : juce::String()));
+        });
     }
 
     void runTaskWithProgressBar (te::ThreadPoolJobWithProgress& job) override
