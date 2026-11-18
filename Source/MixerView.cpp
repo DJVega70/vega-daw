@@ -37,27 +37,13 @@ inline void drawKeyBox (juce::Graphics& g, juce::Rectangle<float> r, bool down =
 class Knob : public juce::Slider
 {
 public:
-    Knob() : juce::Slider (juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox)
+    // drawn by VegaLookAndFeel::drawRotarySlider - the same machined knob and tick ring as the plug-ins
+    Knob() : juce::Slider (juce::Slider::RotaryVerticalDrag, juce::Slider::NoTextBox)
     {
+        setRotaryParameters (juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
+        setMouseDragSensitivity (200);
         setPopupDisplayEnabled (true, true, nullptr);
         setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
-    }
-    void paint (juce::Graphics& g) override
-    {
-        const float d = std::min ((float) getWidth(), (float) getHeight()) - 6.0f;
-        auto r = juce::Rectangle<float> (d, d).withCentre (getLocalBounds().toFloat().getCentre().translated (0, -1.0f));
-        const float alpha = isEnabled() ? 1.0f : 0.45f;
-        for (int i = 4; i > 0; --i) { g.setColour (juce::Colours::black.withAlpha (0.10f * alpha)); g.fillEllipse (r.translated (0, (float) i * 1.4f).expanded ((float) i * 0.7f)); }
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff57575b).withAlpha (alpha), r.getX(), r.getY(), juce::Colour (0xff2a2a2d).withAlpha (alpha), r.getRight(), r.getBottom(), false));
-        g.fillEllipse (r);
-        g.setColour (juce::Colours::white.withAlpha (0.07f * alpha)); g.fillEllipse (r.reduced (d * 0.12f).translated (-d * 0.05f, -d * 0.07f));
-        g.setColour (juce::Colours::black.withAlpha (0.5f)); g.drawEllipse (r, 1.0f);
-        if (! isEnabled()) return;
-        const auto rp = getRotaryParameters();
-        const float a = rp.startAngleRadians + (float) valueToProportionOfLength (getValue()) * (rp.endAngleRadians - rp.startAngleRadians);
-        const auto c = r.getCentre();
-        juce::Point<float> p0 (c.x + std::sin (a) * d * 0.16f, c.y - std::cos (a) * d * 0.16f), p1 (c.x + std::sin (a) * d * 0.43f, c.y - std::cos (a) * d * 0.43f);
-        g.setColour (juce::Colours::white.withAlpha (0.88f)); g.drawLine ({ p0, p1 }, 2.2f);
     }
 };
 
@@ -181,7 +167,7 @@ public:
 //==============================================================================
 namespace mixlayout
 {
-constexpr int padH = 36, padGap = 10, bottom = 8, knobRowH = 64, headerH = 30, numKnobs = 4;
+constexpr int padH = 36, padGap = 10, bottom = 8, knobRowH = 68, headerH = 30, numKnobs = 4;
 inline int padY (int h, int row) { return h - bottom - padH - (1 - row) * (padH + padGap); }   // row 0 = Solo/Arm, row 1 = Mute/Select
 }
 
@@ -365,20 +351,27 @@ public:
         {
             g.setColour (juce::Colours::black.withAlpha (0.25f)); g.fillRoundedRectangle (juce::Rectangle<float> (4.0f, (float) headerH, W - 8.0f, (float) editH - 4.0f), 4.0f);
         }
-        // LEDs + labels under the knobs: EQ LEDs go dark when a band is killed, the filter LED lights when it's engaged
+        // EQ section, drawn like a plug-in panel: titled box, knob titles above, values below
+        if (knobs[0].isVisible())
+        {
+            auto box = juce::Rectangle<float> (5.0f, (float) knobs[0].getY() - 15.0f, W - 10.0f, (float) (knobs[3].getBottom() - knobs[0].getY()) + 30.0f);
+            g.setColour (juce::Colour (0xff181818)); g.fillRoundedRectangle (box, 4.0f);
+            g.setColour (VegaColours::line); g.drawRoundedRectangle (box.reduced (0.5f), 4.0f, 1.0f);
+            g.setColour (VegaColours::line); g.drawHorizontalLine (knobs[3].getY() - 13, box.getX() + 6, box.getRight() - 6);
+        }
         static const char* labels[] { "HI", "MID", "LOW", "FILTER" };
         for (int i = 0; i < mixlayout::numKnobs; ++i)
         {
             if (! knobs[i].isVisible()) continue;
-            auto kb = knobs[i].getBounds().toFloat();
+            auto kb = knobs[i].getBounds();
             const double v = knobs[i].getValue();
-            const bool lit = i < 3 ? v > VegaDJEQPlugin::killDb + 0.05 : std::abs (v) >= 0.03;
-            xl::drawLed (g, juce::Rectangle<float> (16.0f, 4.0f).withCentre ({ kb.getCentreX(), kb.getBottom() + 3.0f }), xl::rowLed[i], lit ? 1.0f : 0.0f);
-            g.setFont (VegaFonts::ui (8.5f, true));
-            const bool atDefault = i < 3 ? std::abs (v) < 0.05 : std::abs (v) < 0.03;
-            g.setColour (atDefault ? VegaColours::textDim : xl::rowLed[i].brighter (0.3f));
-            const juce::String lab = atDefault ? juce::String (labels[i]) : juce::String (labels[i]) + "  " + knobs[i].getTextFromValue (v).replace (" dB", "");
-            g.drawText (lab, 2, (int) kb.getBottom() + 7, W - 4, 11, juce::Justification::centred, true);
+            const bool killed = i < 3 && v <= VegaDJEQPlugin::killDb + 0.05;
+            const bool active = i < 3 ? std::abs (v) >= 0.05 : std::abs (v) >= 0.03;
+            g.setFont (VegaFonts::ui (10.0f, true)); g.setColour (VegaColours::text);
+            g.drawText (labels[i], 0, kb.getY() - 12, W, 12, juce::Justification::centred);
+            g.setFont (VegaFonts::ui (9.5f));
+            g.setColour (killed ? juce::Colour (0xffff5a5a) : active ? VegaColours::accent : VegaColours::textDim);
+            g.drawText (active || killed ? knobs[i].getTextFromValue (v) : juce::String (i < 3 ? "0 dB" : "OFF"), 0, kb.getBottom() - 1, W, 11, juce::Justification::centred);
         }
         // scale ticks to the right of the fader
         auto fb = fader.getBounds();
@@ -389,15 +382,20 @@ public:
             g.setColour (juce::Colour (0xffd0d0d0).withAlpha (0.75f));
             g.fillRect (i % 2 == 0 ? tx : tx + 6, y, i % 2 == 0 ? 22 : 12, 2);
         }
-        // meter (left of the fader)
-        auto mr = meterArea.toFloat();
-        g.setColour (xl::slot); g.fillRoundedRectangle (mr, 2.0f);
-        for (int c = 0; c < 2; ++c)
+        // LED meter (left of the fader), same segments and colours as the plug-ins' meters
         {
-            const float lv = juce::jlimit (0.0f, 1.0f, (level[c] + 60.0f) / 66.0f);
-            auto bar = juce::Rectangle<float> (mr.getX() + 1.5f + c * (mr.getWidth() - 3.0f) / 2, mr.getY() + 2, (mr.getWidth() - 4.0f) / 2, mr.getHeight() - 4);
-            g.setGradientFill (juce::ColourGradient (xl::rowLed[2], 0, bar.getBottom(), juce::Colour (0xffff3a5a), 0, bar.getY(), false));
-            g.fillRect (bar.withTop (bar.getBottom() - lv * bar.getHeight()));
+            auto mr = meterArea.toFloat();
+            const int nSeg = (int) std::size (vegaui::LedMeter::segDb);
+            const float segH = mr.getHeight() / (float) nSeg, colW = (mr.getWidth() - 2.0f) / 2.0f;
+            for (int c = 0; c < 2; ++c)
+                for (int i = 0; i < nSeg; ++i)
+                {
+                    const float th = vegaui::LedMeter::segDb[i];
+                    auto seg = juce::Rectangle<float> (mr.getX() + c * (colW + 2.0f), mr.getY() + i * segH, colW, segH).reduced (0, segH * 0.18f);
+                    const juce::Colour col = th >= -0.1f ? juce::Colour (0xffff5a5a) : (th > -18.0f ? juce::Colours::white : VegaColours::accent);
+                    g.setColour (level[c] >= th ? col : juce::Colour (0xff3a3a3a));
+                    g.fillRect (seg);
+                }
         }
         // value readout
         g.setFont (VegaFonts::mono (11.0f)); g.setColour (VegaColours::textDim);
@@ -434,13 +432,13 @@ public:
         for (int i = 0; i < numKnobs; ++i)
         {
             knobs[i].setVisible (track != nullptr);
-            knobs[i].setBounds (W / 2 - 23, y + (i * knobRowH), 46, 42);
+            knobs[i].setBounds (W / 2 - 30, y + (i * knobRowH) + 11, 60, 46);
         }
-        y += numKnobs * knobRowH;
+        y += numKnobs * knobRowH + 8;
         pan.setBounds (10, y, W - 20, 20); y += 26;
         const int fBottom = (track != nullptr ? padY (h, 0) - 20 : h - bottom - 20) - 16;
         fader.setBounds (W / 2 - 36, y, 60, std::max (60, fBottom - y));
-        meterArea = { fader.getX() - 6, y + 10, 8, std::max (40, fader.getHeight() - 20) };
+        meterArea = { fader.getX() - 10, y + 8, 12, std::max (40, fader.getHeight() - 16) };
         valueArea = { 0, fader.getBottom() + 1, W, 14 };
         if (track != nullptr) for (int i = 0; i < 2; ++i) pads[i].setBounds (2, padY (h, i), W - 4, padH);
     }
