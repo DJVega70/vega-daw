@@ -635,13 +635,15 @@ class Jog : public juce::Component
 public:
     std::function<void (double turns)> onTurn;
     std::function<void (bool)> onTouch;
+    bool plain = false;     // true: all-black wheel (no bright ring)
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat().reduced (4.0f);
         const auto c = r.getCentre(); const float rad = std::min (r.getWidth(), r.getHeight()) * 0.5f;
         g.setColour (juce::Colours::black.withAlpha (0.6f)); g.fillEllipse (juce::Rectangle<float> (rad * 2 + 6, rad * 2 + 6).withCentre (c.translated (0, 3)));
-        g.setGradientFill (juce::ColourGradient (juce::Colours::white, c.x, c.y - rad, juce::Colour (0xff8a8e94), c.x, c.y + rad, false));
-        g.fillEllipse (juce::Rectangle<float> (rad * 2, rad * 2).withCentre (c));                   // bright outer ring
+        if (plain) g.setColour (juce::Colour (0xff1a1b1e));
+        else g.setGradientFill (juce::ColourGradient (juce::Colours::white, c.x, c.y - rad, juce::Colour (0xff8a8e94), c.x, c.y + rad, false));
+        g.fillEllipse (juce::Rectangle<float> (rad * 2, rad * 2).withCentre (c));                   // outer ring
         g.setColour (juce::Colour (0xff0d0e10)); g.fillEllipse (juce::Rectangle<float> (rad * 1.86f, rad * 1.86f).withCentre (c));
         g.setGradientFill (juce::ColourGradient (juce::Colour (0xff2c2e33), c.x - rad * 0.5f, c.y - rad * 0.6f, juce::Colour (0xff141518), c.x + rad * 0.5f, c.y + rad * 0.7f, true));
         g.fillEllipse (juce::Rectangle<float> (rad * 1.76f, rad * 1.76f).withCentre (c));
@@ -685,215 +687,330 @@ private:
 };
 } // namespace tp
 
-/** Left-hand column: display, TRANSPORT section (Marker / Nudge / Cycle / Drop / Replace / Click / Solo +
-    Rew / Ffwd / Stop / Play / Rec), FADER BANK and CHANNEL, navigation cluster with zoom, SCRUB + jog wheel,
-    pad-row labels. Styled after a console transport section. */
+namespace uf
+{
+/** White soft key; glows green when on */
+class SoftKey : public juce::Button
+{
+public:
+    SoftKey() : juce::Button ({}) {}
+    void paintButton (juce::Graphics& g, bool over, bool down) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (2.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.35f)); g.fillRoundedRectangle (r.translated (0, 2.0f), 3.0f);
+        if (getToggleState())
+        {
+            g.setColour (juce::Colour (0xff7dff5a).withAlpha (0.35f)); g.fillRoundedRectangle (r.expanded (3.0f), 5.0f);
+            g.setGradientFill (juce::ColourGradient (juce::Colour (0xffa6ff8a), 0, r.getY(), juce::Colour (0xff4fd83a), 0, r.getBottom(), false));
+        }
+        else g.setGradientFill (juce::ColourGradient (juce::Colour (down ? 0xffd8dadd : over ? 0xfffafbfc : 0xfff0f1f3), 0, r.getY(), juce::Colour (0xffc9ccd0), 0, r.getBottom(), false));
+        g.fillRoundedRectangle (r, 3.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.25f)); g.drawRoundedRectangle (r, 3.0f, 1.0f);
+    }
+};
+
+/** Square console key with a drawn icon or text; optional lit colour */
+class Key : public juce::Button
+{
+public:
+    enum Icon { none, left, right, up, down, dot, loop, metro, dropIn, shiftUp, write, text };
+    Key (Icon i = none, juce::String t = {}, juce::Colour litCol = juce::Colour (0xfff7f06a), bool darkFace = true)
+        : juce::Button (t), icon (i), lit (litCol), dark (darkFace) {}
+    Icon icon; juce::Colour lit; bool dark;
+    void paintButton (juce::Graphics& g, bool over, bool isDown) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (2.0f);
+        const bool on = getToggleState();
+        g.setColour (juce::Colours::black.withAlpha (0.45f)); g.fillRoundedRectangle (r.translated (0, 2.0f), 3.0f);
+        g.setColour (juce::Colour (0xff17181a)); g.fillRoundedRectangle (r, 3.0f);                           // bezel
+        auto face = r.reduced (3.0f);
+        if (on) { g.setColour (lit.withAlpha (0.4f)); g.fillRoundedRectangle (r.expanded (2.0f), 4.0f); }
+        juce::Colour top = on ? lit.brighter (0.2f) : dark ? juce::Colour (isDown ? 0xff2a2c30 : over ? 0xff3b3e43 : 0xff33363a) : juce::Colour (isDown ? 0xffcfd2d6 : over ? 0xfff6f7f8 : 0xffe9ebee);
+        juce::Colour bot = on ? lit.darker (0.2f) : dark ? juce::Colour (0xff222427) : juce::Colour (0xffc2c5ca);
+        g.setGradientFill (juce::ColourGradient (top, 0, face.getY(), bot, 0, face.getBottom(), false));
+        g.fillRoundedRectangle (face, 2.0f);
+        const auto ink = on || ! dark ? juce::Colour (0xff1c1d20) : juce::Colour (0xffe9eaec);
+        const auto c = face.getCentre(); const float s = std::min (face.getWidth(), face.getHeight()) * 0.26f;
+        g.setColour (ink);
+        juce::Path p;
+        switch (icon)
+        {
+            case left:  p.addTriangle (c.x + s * 0.7f, c.y - s, c.x + s * 0.7f, c.y + s, c.x - s * 0.8f, c.y); break;
+            case right: p.addTriangle (c.x - s * 0.7f, c.y - s, c.x - s * 0.7f, c.y + s, c.x + s * 0.8f, c.y); break;
+            case up:    p.addTriangle (c.x - s, c.y + s * 0.7f, c.x + s, c.y + s * 0.7f, c.x, c.y - s * 0.8f); break;
+            case down:  p.addTriangle (c.x - s, c.y - s * 0.7f, c.x + s, c.y - s * 0.7f, c.x, c.y + s * 0.8f); break;
+            case dot:   p.addEllipse (c.x - s * 0.8f, c.y - s * 0.8f, s * 1.6f, s * 1.6f); break;
+            case shiftUp: p.addArrow ({ c.x, c.y + s, c.x, c.y - s }, s * 0.7f, s * 1.8f, s * 1.0f); break;
+            case loop:
+            {
+                juce::Path a; a.addCentredArc (c.x, c.y, s, s, 0, 0.6f, juce::MathConstants<float>::twoPi - 0.2f, true);
+                g.strokePath (a, juce::PathStrokeType (1.6f));
+                p.addTriangle (c.x + s * 0.2f, c.y - s * 1.4f, c.x + s * 0.2f, c.y - s * 0.6f, c.x + s * 0.9f, c.y - s);
+                break;
+            }
+            case metro: p.addTriangle (c.x - s * 0.8f, c.y + s, c.x + s * 0.8f, c.y + s, c.x, c.y - s); g.fillPath (p); p.clear();
+                        g.setColour (on || ! dark ? juce::Colours::white : juce::Colour (0xff222427)); g.drawLine (c.x, c.y + s * 0.6f, c.x + s * 0.6f, c.y - s * 0.6f, 1.5f); return;
+            case dropIn: p.addArrow ({ c.x, c.y - s, c.x, c.y + s * 0.4f }, s * 0.6f, s * 1.6f, s * 0.9f); p.addRectangle (c.x - s, c.y + s * 0.7f, s * 2.0f, s * 0.35f); break;
+            case write: { juce::Path a; a.addRectangle (c.x - s, c.y - s, s * 2, s * 2); g.strokePath (a, juce::PathStrokeType (1.4f));
+                          p.addTriangle (c.x - s * 0.5f, c.y - s * 0.5f, c.x + s * 0.5f, c.y - s * 0.5f, c.x, c.y + s * 0.5f); break; }
+            case text: g.setFont (VegaFonts::ui (getButtonText().length() > 3 ? 9.5f : 11.0f, true)); g.drawFittedText (getButtonText(), face.toNearestInt(), juce::Justification::centred, 2); return;
+            case none: break;
+        }
+        g.fillPath (p);
+    }
+};
+
+/** White transport key */
+class TransportKey : public juce::Button
+{
+public:
+    enum Icon { rew, ffwd, stop, play, rec };
+    explicit TransportKey (Icon i) : juce::Button ({}), icon (i) {}
+    Icon icon;
+    void paintButton (juce::Graphics& g, bool over, bool down) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (2.0f);
+        const bool on = getToggleState();
+        g.setColour (juce::Colours::black.withAlpha (0.45f)); g.fillRoundedRectangle (r.translated (0, 3.0f), 4.0f);
+        g.setColour (juce::Colour (0xff1a1b1d)); g.fillRoundedRectangle (r, 4.0f);
+        auto face = r.reduced (3.0f);
+        juce::Colour top = juce::Colour (down ? 0xffd2d5d9 : over ? 0xfffbfcfd : 0xfff1f2f4), bot = juce::Colour (0xffc8cbd0);
+        if (on && icon == play) { top = juce::Colour (0xff8cff6c); bot = juce::Colour (0xff3fcf32); g.setColour (juce::Colour (0x667dff5a)); g.fillRoundedRectangle (r.expanded (3.0f), 6.0f); }
+        if (on && icon == rec)  { top = juce::Colour (0xffff7a7a); bot = juce::Colour (0xffe03a3a); g.setColour (juce::Colour (0x66ff4040)); g.fillRoundedRectangle (r.expanded (3.0f), 6.0f); }
+        g.setGradientFill (juce::ColourGradient (top, 0, face.getY(), bot, 0, face.getBottom(), false));
+        g.fillRoundedRectangle (face, 3.0f);
+        const auto c = face.getCentre(); const float s = face.getHeight() * 0.2f;
+        juce::Path p;
+        auto tri = [&] (float cx, bool rgt) { if (rgt) p.addTriangle (cx - s, c.y - s, cx - s, c.y + s, cx + s * 0.9f, c.y); else p.addTriangle (cx + s, c.y - s, cx + s, c.y + s, cx - s * 0.9f, c.y); };
+        switch (icon)
+        {
+            case rew: tri (c.x - s * 0.9f, false); tri (c.x + s * 0.9f, false); break;
+            case ffwd: tri (c.x - s * 0.9f, true); tri (c.x + s * 0.9f, true); break;
+            case stop: p.addRectangle (c.x - s * 0.9f, c.y - s * 0.9f, s * 1.8f, s * 1.8f); break;
+            case play: tri (c.x + s * 0.15f, true); break;
+            case rec: p.addEllipse (c.x - s * 0.75f, c.y - s * 0.75f, s * 1.5f, s * 1.5f); break;
+        }
+        g.setColour (icon == rec ? juce::Colour (on ? 0xffffffff : 0xffe8352f) : juce::Colour (0xff2a2b2e));
+        g.fillPath (p);
+    }
+};
+
+/** Endless chrome encoder (knurled skirt, black top, white index dot) */
+class Encoder : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    std::function<void (double)> onDelta;    // +/- per drag step (1.0 = one full sweep)
+    std::function<void()> onReset;
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (3.0f);
+        const auto c = r.getCentre(); const float rad = std::min (r.getWidth(), r.getHeight()) * 0.5f;
+        g.setColour (juce::Colours::black.withAlpha (0.45f)); g.fillEllipse (juce::Rectangle<float> (rad * 2, rad * 2).withCentre (c.translated (0, 4)));
+        // knurled chrome skirt
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff4f5f6), c.x - rad, c.y - rad, juce::Colour (0xff6d7075), c.x + rad, c.y + rad, false));
+        g.fillEllipse (juce::Rectangle<float> (rad * 2, rad * 2).withCentre (c));
+        for (int i = 0; i < 48; ++i)
+        {
+            const float a = i * juce::MathConstants<float>::twoPi / 48.0f + angle;
+            g.setColour (juce::Colours::black.withAlpha (i % 2 ? 0.18f : 0.05f));
+            g.drawLine (c.x + std::sin (a) * rad * 0.8f, c.y - std::cos (a) * rad * 0.8f, c.x + std::sin (a) * rad, c.y - std::cos (a) * rad, 1.0f);
+        }
+        // black top
+        const float tr = rad * 0.72f;
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff3a3c40), c.x, c.y - tr, juce::Colour (0xff0e0f11), c.x, c.y + tr, false));
+        g.fillEllipse (juce::Rectangle<float> (tr * 2, tr * 2).withCentre (c));
+        g.setColour (juce::Colours::white.withAlpha (0.1f)); g.drawEllipse (juce::Rectangle<float> (tr * 2, tr * 2).withCentre (c), 1.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.85f));
+        g.fillEllipse (juce::Rectangle<float> (3.5f, 3.5f).withCentre ({ c.x + std::sin (angle) * tr * 0.72f, c.y - std::cos (angle) * tr * 0.72f }));
+    }
+    void mouseDown (const juce::MouseEvent& e) override { lastY = e.position.y; }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        const double d = (lastY - e.position.y) / 200.0; lastY = e.position.y;
+        angle += (float) (d * juce::MathConstants<double>::twoPi);
+        if (onDelta) onDelta (d);
+        repaint();
+    }
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& w) override { const double d = w.deltaY * 0.08; angle += (float) (d * 6.28); if (onDelta) onDelta (d); repaint(); }
+    void mouseDoubleClick (const juce::MouseEvent&) override { if (onReset) onReset(); }
+private:
+    float angle = 0, lastY = 0;
+};
+} // namespace uf
+
+/** Left-hand column, styled after a console's channel / transport control unit, drawn on a fixed
+    460 x 880 canvas and scaled exactly like the master section. */
 class MixerView::ControlPanel : public juce::Component, private juce::Timer
 {
 public:
-    static constexpr int W = 238;
+    static constexpr int CW = 460, CH = 880;
+    int widthForHeight (int h) const { return juce::roundToInt (CW * (float) h / CH); }
+
     ControlPanel (MixerView& o, ViewState& v) : owner (o), vs (v)
     {
-        for (auto* k : { &marker, &nudge, &cycle, &drop, &replace, &click, &solo, &scrub, &bankL, &bankR, &chanL, &chanR, &up, &down, &left, &right, &zoom })
-            addAndMakeVisible (k);
-        for (auto* k : { &rew, &ffwd, &stop, &play, &rec }) addAndMakeVisible (k);
-        addAndMakeVisible (jog);
-        // EDIT (the old Mode key): show / hide each channel's instrument, inserts and sends
-        editKey.setTooltip ("Edit: show / hide each channel's instrument, inserts and sends");
-        editKey.onClick = [this] { owner.showEdit = ! owner.showEdit; owner.touched ("Edit", owner.showEdit ? "Inserts shown" : "Inserts hidden"); owner.layoutChanged(); };
-        addAndMakeVisible (editKey);
+        addAndMakeVisible (canvas);
+        canvas.setSize (CW, CH);
+        canvas.paintFn = [this] (juce::Graphics& g) { paintCanvas (g); };
 
-        marker.setTooltip ("Marker: drop a marker at the playhead (or remove the one there). Shift + rewind / fast-forward jumps between markers");
-        marker.onClick = [this] { toggleMarker(); };
-        nudge.setClickingTogglesState (true); nudge.setTooltip ("Nudge: rewind / fast-forward move the selected clip by one grid step");
-        nudge.onClick = [this] { owner.touched ("Nudge", nudge.getToggleState() ? "On: << >> move the clip" : "Off"); };
-        cycle.setTooltip ("Cycle (loop) on / off");
-        cycle.onClick = [this] { auto& t = transport(); t.looping = ! t.looping.get(); if (t.looping && t.getLoopRange().getLength() <= 0s) t.setLoopRange ({ 0s, vs.session.barLength() * 4 }); owner.touched ("Cycle", t.looping ? "On" : "Off"); };
-        drop.setTooltip ("Drop (punch in / out): recording only happens inside the cycle range");
-        drop.onClick = [this] { auto& e = vs.edit(); e.recordingPunchInOut = ! e.recordingPunchInOut.get(); owner.touched ("Drop-in", e.recordingPunchInOut ? "Punch inside the cycle" : "Off"); };
-        replace.setClickingTogglesState (true); replace.setTooltip ("Replace: MIDI recording replaces the notes underneath instead of layering");
-        replace.onClick = [this] { for (auto& m : vs.edit().engine.getDeviceManager().getMidiInDevices()) m->replaceExistingClips = replace.getToggleState(); owner.touched ("MIDI record", replace.getToggleState() ? "Replace" : "Overdub"); };
-        click.setTooltip ("Metronome");
+        // soft keys: VU (meters) / EDIT (inserts) / SHIFT (pads arm/select) / LEARN (MIDI learn)
+        for (int i = 0; i < 4; ++i) { canvas.addAndMakeVisible (soft[i]); soft[i].setBounds (54 + i * 96, 22, 60, 28); }
+        soft[0].setToggleState (true, juce::dontSendNotification);
+        soft[0].onClick = [this] { soft[0].setToggleState (true, juce::dontSendNotification); peak[0] = peak[1] = -100; owner.touched ("Meters", "Peak hold reset"); };
+        soft[1].onClick = [this] { owner.showEdit = ! owner.showEdit; owner.touched ("Edit", owner.showEdit ? "Inserts shown" : "Inserts hidden"); owner.layoutChanged(); };
+        soft[2].onClick = [this] { owner.shift = ! owner.shift; owner.touched ("Pads", owner.shift ? "Arm / Select" : "Solo / Mute"); };
+        soft[3].onClick = [this] { auto& ls = vs.edit().engine.getMidiLearnState(); ls.setActive (! ls.isActive()); owner.touched ("MIDI learn", ls.isActive() ? "Move a control, then a knob" : "Off"); };
+        soft[0].setTooltip ("VU meters (click to reset the peak hold)"); soft[1].setTooltip ("Edit: show / hide each channel's instrument, inserts and sends");
+        soft[2].setTooltip ("Shift: the pads become Record Arm (top) and Select (bottom)"); soft[3].setTooltip ("MIDI learn: move a control on screen, then a knob on your controller");
+
+        // 4 encoders under the screen (page 1: volume / pan / filter / VU ref, page 2 (5-8): HI / MID / LOW / master)
+        for (int i = 0; i < 4; ++i)
+        {
+            canvas.addAndMakeVisible (enc[i]); enc[i].setBounds (encX (i) - 30, 334, 60, 60);
+            enc[i].onDelta = [this, i] (double d) { encoderMoved (i, d); };
+            enc[i].onReset = [this, i] { encoderReset (i); };
+        }
+        canvas.addAndMakeVisible (channel); channel.setBounds (62, 432, 96, 96);
+        channel.onDelta = [this] (double d) { chanAcc += d * 12.0; while (chanAcc >= 1) { owner.selectNeighbour (1); chanAcc -= 1; } while (chanAcc <= -1) { owner.selectNeighbour (-1); chanAcc += 1; } };
+        channel.setTooltip ("CHANNEL: turn to select tracks");
+
+        auto key = [this] (uf::Key& k, int x, int y, int w = 40, int h = 34) { canvas.addAndMakeVisible (k); k.setBounds (x, y, w, h); };
+        key (mode, 232, 424); key (page58, 282, 424); key (chanL, 332, 424); key (chanR, 382, 424);
+        key (bankL, 232, 482); key (bankR, 282, 482); key (layer, 332, 482); key (scrub, 382, 482);
+        mode.setClickingTogglesState (true); page58.setClickingTogglesState (true); layer.setClickingTogglesState (true); scrub.setClickingTogglesState (true);
+        mode.setTooltip ("MODE: the arrow keys zoom instead of moving"); page58.setTooltip ("5-8: encoders control HI / MID / LOW / master volume");
+        chanL.setTooltip ("Shift the mixer by one channel"); chanR.setTooltip ("Shift the mixer by one channel");
+        bankL.setTooltip ("Previous 8 channels"); bankR.setTooltip ("Next 8 channels");
+        layer.setTooltip ("LAYER: rewind / fast-forward nudge the selected clip by one grid step"); scrub.setTooltip ("SCRUB: the jog wheel plays the audio as you turn it");
+        mode.onClick = [this] { owner.touched ("Mode", mode.getToggleState() ? "Arrows zoom" : "Arrows navigate"); };
+        page58.onClick = [this] { owner.touched ("Encoders", page58.getToggleState() ? "5-8: Hi / Mid / Low / Master" : "1-4: Vol / Pan / Filter / VU ref"); };
+        chanL.onClick = [this] { owner.scrollStrips (-1); }; chanR.onClick = [this] { owner.scrollStrips (1); };
+        bankL.onClick = [this] { owner.pageBy (-1); }; bankR.onClick = [this] { owner.pageBy (1); };
+        layer.onClick = [this] { owner.touched ("Nudge", layer.getToggleState() ? "<< >> move the clip" : "Off"); };
+        scrub.onClick = [this] { owner.touched ("Jog wheel", scrub.getToggleState() ? "Scrub" : "Move playhead"); };
+
+        // navigation cluster + jog
+        key (navUp, 92, 568, 36, 34); key (navDown, 92, 668, 36, 34); key (navLeft, 42, 618, 36, 34); key (navRight, 142, 618, 36, 34); key (navDot, 92, 618, 36, 34);
+        navUp.onClick = [this] { if (mode.getToggleState()) vZoom (1); else owner.selectNeighbour (-1); };
+        navDown.onClick = [this] { if (mode.getToggleState()) vZoom (-1); else owner.selectNeighbour (1); };
+        navLeft.onClick = [this] { if (mode.getToggleState()) hZoom (-1); else moveBars (-1); };
+        navRight.onClick = [this] { if (mode.getToggleState()) hZoom (1); else moveBars (1); };
+        navDot.onClick = [this] { toggleMarker(); };
+        navUp.setTooltip ("Previous track (MODE: taller tracks)"); navDown.setTooltip ("Next track (MODE: shorter tracks)");
+        navLeft.setTooltip ("Back one bar (MODE: zoom out)"); navRight.setTooltip ("Forward one bar (MODE: zoom in)");
+        navDot.setTooltip ("Drop a marker at the playhead (or remove the one there)");
+        canvas.addAndMakeVisible (jog); jog.setBounds (232, 548, 200, 200); jog.plain = true;
+        jog.onTurn = [this] (double t) { jogTurn (t); };
+        jog.onTouch = [this] (bool d) { if (scrub.getToggleState()) vs.edit().getTransport().setUserDragging (d); };
+
+        // automation / function row
+        juce::Button* row[] { &autoOff, &autoRead, &autoWrite, &cycle, &click, &drop, &shiftKey };
+        for (int i = 0; i < 7; ++i) { canvas.addAndMakeVisible (row[i]); row[i]->setBounds (36 + i * 56, 760, 38, 32); }
+        autoOff.setTooltip ("Automation OFF (no read, no write)"); autoRead.setTooltip ("Automation READ"); autoWrite.setTooltip ("Automation WRITE: record moves while playing");
+        cycle.setTooltip ("Cycle (loop)"); click.setTooltip ("Metronome"); drop.setTooltip ("Drop-in: record only inside the cycle range"); shiftKey.setTooltip ("Shift: Rew / Ffwd jump between markers");
+        autoOff.onClick = [this] { auto& a = vs.edit().getAutomationRecordManager(); a.setReadingAutomation (false); a.setWritingAutomation (false); owner.touched ("Automation", "Off"); };
+        autoRead.onClick = [this] { auto& a = vs.edit().getAutomationRecordManager(); a.setReadingAutomation (true); a.setWritingAutomation (false); owner.touched ("Automation", "Read"); };
+        autoWrite.onClick = [this] { auto& a = vs.edit().getAutomationRecordManager(); a.setReadingAutomation (true); a.setWritingAutomation (! a.isWritingAutomation()); owner.touched ("Automation", a.isWritingAutomation() ? "Write" : "Read"); };
+        cycle.onClick = [this] { auto& t = vs.edit().getTransport(); t.looping = ! t.looping.get(); if (t.looping && t.getLoopRange().getLength() <= 0s) t.setLoopRange ({ 0s, vs.session.barLength() * 4 }); owner.touched ("Cycle", t.looping ? "On" : "Off"); };
         click.onClick = [this] { vs.edit().clickTrackEnabled = ! vs.edit().clickTrackEnabled.get(); owner.touched ("Click", vs.edit().clickTrackEnabled.get() ? "On" : "Off"); };
-        solo.setTooltip ("Solo the selected track");
-        solo.onClick = [this] { if (auto* t = vs.getSelectedTrack()) { t->setSolo (! t->isSolo (false)); owner.touched (t->getName(), t->isSolo (false) ? "Solo On" : "Solo Off"); } };
+        drop.onClick = [this] { auto& e = vs.edit(); e.recordingPunchInOut = ! e.recordingPunchInOut.get(); owner.touched ("Drop-in", e.recordingPunchInOut ? "Punch inside the cycle" : "Off"); };
+        shiftKey.setClickingTogglesState (true);
 
+        // transport
+        juce::Button* tk[] { &rew, &ffwd, &stop, &play, &rec };
+        for (int i = 0; i < 5; ++i) { canvas.addAndMakeVisible (tk[i]); tk[i]->setBounds (30 + i * 82, 808, 70, 46); }
         rew.onClick = [this] { if (! held) step (-1); held = false; };
         ffwd.onClick = [this] { if (! held) step (1); held = false; };
-        stop.onClick = [this] { auto& t = transport(); if (t.isPlaying() || t.isRecording()) t.stop (false, false); else t.setPosition (0s); };
-        play.onClick = [this] { auto& t = transport(); if (t.isPlaying()) t.stop (false, false); else t.play (false); };
-        rec.onClick = [this] { auto& t = transport(); if (t.isRecording()) t.stop (true, false); else t.record (false); };
-        rew.setTooltip ("Rewind one bar (hold to keep going). Shift: previous marker"); ffwd.setTooltip ("Forward one bar (hold to keep going). Shift: next marker");
-        stop.setTooltip ("Stop (press again to return to zero)");
-
-        bankL.onClick = [this] { owner.pageBy (-1); }; bankR.onClick = [this] { owner.pageBy (1); };
-        chanL.onClick = [this] { owner.scrollStrips (-1); }; chanR.onClick = [this] { owner.scrollStrips (1); };
-        bankL.setTooltip ("Previous 8 channels"); bankR.setTooltip ("Next 8 channels"); chanL.setTooltip ("Shift the channels by one"); chanR.setTooltip ("Shift the channels by one");
-        up.onClick = [this] { if (zoom.getToggleState()) vZoom (1); else owner.selectNeighbour (-1); };
-        down.onClick = [this] { if (zoom.getToggleState()) vZoom (-1); else owner.selectNeighbour (1); };
-        left.onClick = [this] { if (zoom.getToggleState()) hZoom (-1); else moveBars (-1); };
-        right.onClick = [this] { if (zoom.getToggleState()) hZoom (1); else moveBars (1); };
-        zoom.setClickingTogglesState (true);
-        zoom.onClick = [this] { owner.touched ("Zoom", zoom.getToggleState() ? "Arrows zoom" : "Arrows navigate"); };
-        zoom.setTooltip ("Zoom: the arrows zoom the arrange window instead of moving");
-        up.setTooltip ("Select the previous track"); down.setTooltip ("Select the next track"); left.setTooltip ("Playhead back one bar"); right.setTooltip ("Playhead forward one bar");
-        scrub.setClickingTogglesState (true); scrub.setTooltip ("Scrub: the jog wheel plays the audio as you turn it");
-        scrub.onClick = [this] { owner.touched ("Jog wheel", scrub.getToggleState() ? "Scrub" : "Move playhead"); };
-        jog.onTurn = [this] (double turns) { jogTurn (turns); };
-        jog.onTouch = [this] (bool down) { if (scrub.getToggleState()) transport().setUserDragging (down); };
-        startTimerHz (20);
+        stop.onClick = [this] { auto& t = vs.edit().getTransport(); if (t.isPlaying() || t.isRecording()) t.stop (false, false); else t.setPosition (0s); };
+        play.onClick = [this] { auto& t = vs.edit().getTransport(); if (t.isPlaying()) t.stop (false, false); else t.play (false); };
+        rec.onClick = [this] { auto& t = vs.edit().getTransport(); if (t.isRecording()) t.stop (true, false); else t.record (false); };
+        rew.setTooltip ("Back one bar (hold to keep going). SHIFT: previous marker. LAYER: nudge clip"); ffwd.setTooltip ("Forward one bar (hold to keep going). SHIFT: next marker. LAYER: nudge clip");
+        stop.setTooltip ("Stop (again: return to zero)");
+        startTimerHz (30);
     }
-    void show (const juce::String& a, const juce::String& b) { line1 = a; line2 = b; repaint (oled); }
+    ~ControlPanel() override { if (masterAdded && masterCtx != nullptr) masterCtx->masterLevels.removeClient (client); }
 
-    void paint (juce::Graphics& g) override
-    {
-        // logo
-        g.setColour (juce::Colour (0xffe6e6e6));
-        g.setFont (VegaFonts::ui (17.0f, true)); g.drawText ("VEGA", 16, 12, 60, 22, juce::Justification::left);
-        g.setFont (VegaFonts::ui (17.0f, false)); g.drawText ("MIXER", 66, 12, 70, 22, juce::Justification::left);
-        g.setFont (VegaFonts::ui (9.0f, true)); g.drawText ("XL", 124, 10, 20, 12, juce::Justification::left);
-        // display
-        g.setColour (juce::Colours::black); g.fillRoundedRectangle (oled.toFloat().expanded (4.0f), 5.0f);
-        g.setColour (juce::Colour (0xff333336)); g.drawRoundedRectangle (oled.toFloat().expanded (4.0f), 5.0f, 1.0f);
-        g.setColour (juce::Colour (0xff0b0b0d)); g.fillRect (oled);
-        g.setColour (juce::Colours::white.withAlpha (0.82f)); g.setFont (VegaFonts::mono (12.0f));
-        g.drawFittedText (line1, oled.withHeight (oled.getHeight() / 2).withTrimmedTop (5), juce::Justification::centred, 1);
-        g.setColour (juce::Colours::white); g.setFont (VegaFonts::mono (15.5f));
-        g.drawFittedText (line2, oled.withTrimmedTop (oled.getHeight() / 2 - 2).withTrimmedBottom (5), juce::Justification::centred, 1);
-
-        auto section = [&g] (juce::Rectangle<int> r, juce::Colour fill)
-        {
-            if (r.isEmpty()) return;
-            g.setColour (fill); g.fillRoundedRectangle (r.toFloat(), 7.0f);
-            g.setColour (juce::Colour (0xff3a3c40)); g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 7.0f, 1.0f);
-        };
-        auto caption = [&g] (const juce::String& t, juce::Rectangle<int> under, float size = 8.6f)
-        {
-            g.setFont (VegaFonts::ui (size, true)); g.setColour (juce::Colour (0xffe8e8ea));
-            g.drawText (t, under.getCentreX() - 34, under.getBottom() + 2, 68, 12, juce::Justification::centred);
-        };
-        // TRANSPORT
-        section (transportBox, juce::Colour (0xff141517));
-        g.setFont (VegaFonts::ui (11.0f, true)); g.setColour (juce::Colour (0xffe8e8ea));
-        g.drawText ("TRANSPORT", transportBox.withHeight (18).translated (0, 3), juce::Justification::centred);
-        caption ("MARKER", marker.getBounds()); caption ("NUDGE", nudge.getBounds()); caption ("CYCLE", cycle.getBounds()); caption ("DROP", drop.getBounds());
-        caption ("REPLACE", replace.getBounds()); caption ("CLICK", click.getBounds()); caption ("SOLO", solo.getBounds()); caption ("EDIT", editKey.getBounds());
-        // FADER BANK / CHANNEL
-        section (bankBox, juce::Colour (0xff1e1f22));
-        if (! bankBox.isEmpty())
-        {
-            g.setFont (VegaFonts::ui (10.0f, true)); g.setColour (juce::Colour (0xffe8e8ea));
-            g.drawText ("FADER BANK", bankBox.withHeight (16).translated (0, 3), juce::Justification::centred);
-            g.drawText ("CHANNEL", juce::Rectangle<int> (bankBox.getX(), chanL.getY() - 16, bankBox.getWidth(), 14), juce::Justification::centred);
-            for (auto* k : { &bankL, &chanL }) { juce::Path t; const float y = k->getBounds().toFloat().getCentreY(), x = (float) k->getX() - 9; t.addTriangle (x, y, x + 6, y - 5, x + 6, y + 5); g.setColour (juce::Colour (0xffd0d0d4)); g.fillPath (t); }
-            for (auto* k : { &bankR, &chanR }) { juce::Path t; const float y = k->getBounds().toFloat().getCentreY(), x = (float) k->getRight() + 9; t.addTriangle (x, y, x - 6, y - 5, x - 6, y + 5); g.setColour (juce::Colour (0xffd0d0d4)); g.fillPath (t); }
-        }
-        // navigation cluster ring + direction marks
-        if (up.isVisible())
-        {
-            const auto c = zoom.getBounds().toFloat().getCentre(); const float rr = (float) (right.getRight() - left.getX()) * 0.47f;
-            g.setColour (juce::Colour (0xffcfd0d4).withAlpha (0.8f)); g.drawEllipse (juce::Rectangle<float> (rr * 2, rr * 2).withCentre (c), 1.4f);
-            auto mark = [&g] (float x, float y, float dx, float dy)
-            {
-                juce::Path t; t.addTriangle (x + dx * 6, y + dy * 6, x - dy * 5, y + dx * 5, x + dy * 5, y - dx * 5);
-                g.setColour (juce::Colour (0xffd0d0d4)); g.fillPath (t);
-            };
-            mark (c.x, (float) up.getY() - 9, 0, -1); mark (c.x, (float) down.getBottom() + 9, 0, 1);
-            mark ((float) left.getX() - 9, c.y, -1, 0); mark ((float) right.getRight() + 9, c.y, 1, 0);
-            g.setColour (juce::Colour (0xffd0d0d4)); g.drawEllipse ((float) zoom.getRight() + 4, (float) zoom.getY() - 16, 11, 11, 1.2f);
-            g.drawText ("+", zoom.getRight() + 4, zoom.getY() - 16, 11, 11, juce::Justification::centred);
-        }
-        if (scrub.isVisible()) caption ("SCRUB", scrub.getBounds());
-        // pad row labels, aligned with the strips' pad rows
-        const int h = getHeight();
-        for (int row = 0; row < 2; ++row)
-        {
-            auto r = juce::Rectangle<int> (8, mixlayout::padY (h, row), W - 16, mixlayout::padH);
-            g.setColour (juce::Colour (0xff18181a)); g.fillRoundedRectangle (r.toFloat(), 3.0f);
-            g.setColour (juce::Colour (0xff2c2c30)); g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 3.0f, 1.0f);
-            const juce::String a = row == 0 ? "Solo" : "Mute", b = row == 0 ? "Arm" : "Select";
-            g.setFont (VegaFonts::ui (12.5f, ! owner.shift)); g.setColour (owner.shift ? VegaColours::textDim : juce::Colours::white);
-            auto t = r.reduced (10, 0);
-            const int wa = juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), a);
-            g.drawText (a, t.removeFromLeft (wa + 2), juce::Justification::centredLeft);
-            g.setColour (VegaColours::textDim); g.setFont (VegaFonts::ui (12.5f)); g.drawText (" / ", t.removeFromLeft (16), juce::Justification::centred);
-            g.setFont (VegaFonts::ui (12.5f, owner.shift)); g.setColour (owner.shift ? juce::Colours::white : VegaColours::textDim);
-            g.drawText (b, t, juce::Justification::centredLeft);
-        }
-        shiftArea = { 8, mixlayout::padY (h, 0) - 30, W - 16, 22 };
-        g.setFont (VegaFonts::ui (10.0f, true)); g.setColour (owner.shift ? juce::Colour (0xffff7a8a) : VegaColours::textDim);
-        g.drawText (owner.shift ? "SHIFT ON: pads = Arm / Select   (click)" : "click here for Shift (Arm / Select)", shiftArea, juce::Justification::centred);
-    }
-    void mouseUp (const juce::MouseEvent& e) override
-    {
-        if (shiftArea.contains (e.getPosition()))
-        {
-            owner.shift = ! owner.shift;
-            owner.touched ("Pads", owner.shift ? "Arm / Select" : "Solo / Mute");
-            repaint();
-        }
-    }
-    void resized() override
-    {
-        const int limit = mixlayout::padY (getHeight(), 0) - 34;    // keep clear of the pad labels / shift line
-        oled = { 18, 44, W - 36, 58 };
-        transportBox = { 6, 116, W - 12, 158 };
-        // small keys: 4 + 3
-        const int ks = 26;
-        const int row1[] { 0, 1, 2, 3 };
-        juce::Button* r1[] { &marker, &nudge, &cycle, &drop };
-        for (int i : row1) r1[i]->setBounds (transportBox.getX() + 18 + i * 54, transportBox.getY() + 24, ks, ks);
-        juce::Button* r2[] { &replace, &click, &solo, &editKey };
-        for (int i = 0; i < 4; ++i) r2[i]->setBounds (transportBox.getX() + 18 + i * 54, transportBox.getY() + 66, ks, ks);
-        juce::Button* big[] { &rew, &ffwd, &stop, &play, &rec };
-        const int bw = (transportBox.getWidth() - 16) / 5;
-        for (int i = 0; i < 5; ++i) big[i]->setBounds (transportBox.getX() + 8 + i * bw, transportBox.getY() + 112, bw - 4, 36);
-
-        bankBox = { 6, 284, W - 12, 108 };
-        const bool fitsBank = bankBox.getBottom() < limit;
-        for (auto* k : { &bankL, &bankR, &chanL, &chanR }) k->setVisible (fitsBank);
-        if (fitsBank)
-        {
-            bankL.setBounds (bankBox.getCentreX() - 58, bankBox.getY() + 22, 50, 30); bankR.setBounds (bankBox.getCentreX() + 8, bankBox.getY() + 22, 50, 30);
-            chanL.setBounds (bankBox.getCentreX() - 58, bankBox.getY() + 72, 50, 30); chanR.setBounds (bankBox.getCentreX() + 8, bankBox.getY() + 72, 50, 30);
-        }
-        else bankBox = {};
-
-        // navigation cluster (left) + scrub / jog (right)
-        const int navTop = 404, navC = navTop + 64, navX = 54;
-        const bool fitsNav = navC + 66 < limit;
-        for (auto* k : { &up, &down, &left, &right, &zoom }) k->setVisible (fitsNav);
-        jog.setVisible (fitsNav); scrub.setVisible (fitsNav);
-        if (fitsNav)
-        {
-            zoom.setBounds (navX - 13, navC - 13, 26, 26);
-            up.setBounds (navX - 13, navC - 44, 26, 28); down.setBounds (navX - 13, navC + 16, 26, 28);
-            left.setBounds (navX - 44, navC - 13, 28, 26); right.setBounds (navX + 16, navC - 13, 28, 26);
-            scrub.setBounds (W - 38, navTop - 8, 26, 26);
-            jog.setBounds (W - 124, navTop + 22, 114, 114);
-        }
-    }
-    void scrollChanged() {}
+    void show (const juce::String& a, const juce::String& b) { line1 = a; line2 = b; canvas.repaint(); }
+    void resized() override { canvas.setTransform (juce::AffineTransform::scale ((float) getHeight() / CH)); }
 
 private:
-    te::TransportControl& transport() { return vs.edit().getTransport(); }
+    struct Canvas : juce::Component
+    {
+        std::function<void (juce::Graphics&)> paintFn;
+        void paint (juce::Graphics& g) override { if (paintFn) paintFn (g); }
+    };
+    static int encX (int i) { return 84 + i * 97; }
+
+    // ---------------------------------------------------------------- encoders
+    te::AudioTrack* target() { return vs.getSelectedTrack(); }
+    void encoderMoved (int i, double d)
+    {
+        auto* t = target();
+        const bool p2 = page58.getToggleState();
+        if (! p2 && i == 3) { vuRef = juce::jlimit (-24.0f, -8.0f, vuRef + (float) d * 16.0f); owner.touched ("VU reference", juce::String (vuRef, 1) + " dBFS = 0 VU"); return; }
+        if (p2 && i == 3)
+        {
+            if (auto vp = vs.edit().getMasterVolumePlugin()) { vp->setVolumeDb (juce::jlimit (-60.0f, 6.0f, vp->getVolumeDb() + (float) d * 30.0f)); owner.touched ("Master", juce::String (vp->getVolumeDb(), 1) + " dB"); }
+            return;
+        }
+        if (t == nullptr) { owner.touched ("Encoders", "Select a track first"); return; }
+        if (! p2 && i == 0) { if (auto vp = t->getVolumePlugin()) { vp->setVolumeDb (juce::jlimit (-60.0f, 6.0f, vp->getVolumeDb() + (float) d * 30.0f)); owner.touched (t->getName() + "  Volume", juce::String (vp->getVolumeDb(), 1) + " dB"); } return; }
+        if (! p2 && i == 1) { if (auto vp = t->getVolumePlugin()) { vp->setPan (juce::jlimit (-1.0f, 1.0f, vp->getPan() + (float) d * 2.0f)); owner.touched (t->getName() + "  Pan", panText (vp->getPan())); } return; }
+        auto* dj = vs.session.djEq (*t, false);
+        if (dj == nullptr) return;
+        if (! p2 && i == 2) { dj->filter->setParameter (juce::jlimit (-1.0f, 1.0f, dj->filter->getCurrentValue() + (float) d * 2.0f), juce::sendNotification); owner.touched (t->getName() + "  Filter", VegaDJEQPlugin::describeFilter (dj->filter->getCurrentValue())); return; }
+        if (p2 && i < 3)
+        {
+            auto& b = dj->band[i];
+            b->setParameter (juce::jlimit (VegaDJEQPlugin::killDb, VegaDJEQPlugin::maxDb, b->getCurrentValue() + (float) d * 46.0f), juce::sendNotification);
+            static const char* nm[] { "Hi", "Mid", "Low" };
+            owner.touched (t->getName() + "  " + nm[i], b->getCurrentValueAsString());
+        }
+    }
+    void encoderReset (int i)
+    {
+        auto* t = target(); const bool p2 = page58.getToggleState();
+        if (! p2 && i == 3) { vuRef = -18.0f; return; }
+        if (p2 && i == 3) { if (auto vp = vs.edit().getMasterVolumePlugin()) vp->setVolumeDb (0.0f); return; }
+        if (t == nullptr) return;
+        if (! p2 && i == 0) { if (auto vp = t->getVolumePlugin()) vp->setVolumeDb (0.0f); return; }
+        if (! p2 && i == 1) { if (auto vp = t->getVolumePlugin()) vp->setPan (0.0f); return; }
+        if (auto* dj = vs.session.djEq (*t, false)) { if (! p2 && i == 2) dj->filter->setParameter (0.0f, juce::sendNotification); else if (p2) dj->band[i]->setParameter (0.0f, juce::sendNotification); }
+    }
+    static juce::String panText (float v) { return std::abs (v) < 0.01f ? juce::String ("C") : juce::String (juce::roundToInt (std::abs (v) * 100)) + (v < 0 ? "L" : "R"); }
+    juce::String encLabel (int i, juce::String& value)
+    {
+        auto* t = target(); const bool p2 = page58.getToggleState();
+        value = "-";
+        if (! p2 && i == 3) { value = juce::String (vuRef, 1) + " dB"; return "Ref"; }
+        if (p2 && i == 3) { if (auto vp = vs.edit().getMasterVolumePlugin()) value = juce::String (vp->getVolumeDb(), 1); return "Master"; }
+        if (t == nullptr) return i == 0 ? "Volume" : i == 1 ? "Pan" : i == 2 ? "Filter" : "";
+        if (! p2 && i == 0) { if (auto vp = t->getVolumePlugin()) value = juce::String (vp->getVolumeDb(), 1); return "Volume"; }
+        if (! p2 && i == 1) { if (auto vp = t->getVolumePlugin()) value = panText (vp->getPan()); return "Pan"; }
+        if (auto* dj = vs.session.djEq (*t, false))
+        {
+            if (! p2 && i == 2) { value = VegaDJEQPlugin::describeFilter (dj->filter->getCurrentValue()); return "Filter"; }
+            if (p2) { const float v = dj->band[i]->getCurrentValue(); value = v <= VegaDJEQPlugin::killDb + 0.05f ? juce::String ("KILL") : juce::String (v, 1); return i == 0 ? "Hi" : i == 1 ? "Mid" : "Low"; }
+        }
+        return {};
+    }
+
+    // ---------------------------------------------------------------- transport helpers
     void step (int dir)
     {
-        auto& t = transport();
-        if (juce::ModifierKeys::currentModifiers.isShiftDown())
-        {   // jump between markers
+        auto& t = vs.edit().getTransport();
+        if (shiftKey.getToggleState() || juce::ModifierKeys::currentModifiers.isShiftDown())
+        {
             auto& mm = vs.edit().getMarkerManager();
             auto* m = dir > 0 ? mm.getNextMarker (t.getPosition() + te::TimeDuration::fromSeconds (0.001)) : mm.getPrevMarker (t.getPosition() - te::TimeDuration::fromSeconds (0.001));
             if (m != nullptr) { t.setPosition (m->getPosition().getStart()); owner.touched ("Marker", m->getName()); }
             return;
         }
-        if (nudge.getToggleState())
+        if (layer.getToggleState())
         {
             if (auto* c = vs.getSelectedClip())
             {
                 const double grid = vs.snapDiv > 0 ? 1.0 / vs.snapDiv : 1.0;
-                const double b = std::max (0.0, vs.timeToBeats (c->getPosition().getStart()) + dir * grid);
-                c->setStart (vs.beatsToTime (b), false, true);
+                c->setStart (vs.beatsToTime (std::max (0.0, vs.timeToBeats (c->getPosition().getStart()) + dir * grid)), false, true);
                 owner.touched ("Nudge " + c->getName(), dawui::formatBarsBeats (vs.edit(), c->getPosition().getStart()));
             }
             else owner.touched ("Nudge", "Select a clip first");
@@ -903,70 +1020,257 @@ private:
     }
     void moveBars (int dir)
     {
-        auto& t = transport();
-        const double bar = vs.session.barLength().inSeconds();
-        const double now = t.getPosition().inSeconds();
-        const double target = dir > 0 ? (std::floor (now / bar + 1e-6) + 1) * bar : std::max (0.0, (std::ceil (now / bar - 1e-6) - 1) * bar);
-        t.setPosition (te::TimePosition::fromSeconds (target));
+        auto& t = vs.edit().getTransport();
+        const double bar = vs.session.barLength().inSeconds(), now = t.getPosition().inSeconds();
+        t.setPosition (te::TimePosition::fromSeconds (dir > 0 ? (std::floor (now / bar + 1e-6) + 1) * bar : std::max (0.0, (std::ceil (now / bar - 1e-6) - 1) * bar)));
         owner.touched ("Position", dawui::formatBarsBeats (vs.edit(), t.getPosition()));
     }
     void hZoom (int dir) { vs.pixelsPerBeat = juce::jlimit (2.0, 400.0, vs.pixelsPerBeat * (dir > 0 ? 1.25 : 0.8)); owner.touched ("Zoom", juce::String (vs.pixelsPerBeat, 0) + " px / beat"); }
     void vZoom (int dir)
     {
-        for (auto* t : vs.session.getTracks (true))
-            t->state.setProperty ("vegaHeight", juce::jlimit (44, 260, (int) t->state.getProperty ("vegaHeight", 84) + dir * 16), nullptr);
+        for (auto* t : vs.session.getTracks (true)) t->state.setProperty ("vegaHeight", juce::jlimit (44, 260, (int) t->state.getProperty ("vegaHeight", 84) + dir * 16), nullptr);
         owner.touched ("Track height", dir > 0 ? "Taller" : "Shorter");
     }
     void toggleMarker()
     {
         auto& mm = vs.edit().getMarkerManager();
-        const auto now = transport().getPosition();
+        const auto now = vs.edit().getTransport().getPosition();
         for (auto& m : mm.getMarkers())
             if (std::abs ((m->getPosition().getStart() - now).inSeconds()) < 0.05) { m->removeFromParent(); owner.touched ("Marker", "Removed"); return; }
         int next = 1; for (auto& m : mm.getMarkers()) next = std::max (next, m->getMarkerID() + 1);
-        if (auto m = mm.createMarker (next, now, vs.session.barLength(), nullptr)) owner.touched ("Marker " + juce::String (next), dawui::formatBarsBeats (vs.edit(), now));
+        if (mm.createMarker (next, now, vs.session.barLength(), nullptr) != nullptr) owner.touched ("Marker " + juce::String (next), dawui::formatBarsBeats (vs.edit(), now));
     }
     void jogTurn (double turns)
     {
-        auto& t = transport();
+        auto& t = vs.edit().getTransport();
         if (scrub.getToggleState()) { te::scrub (t, turns * 40.0); return; }
-        const double beats = std::max (0.0, vs.timeToBeats (t.getPosition()) + turns * 4.0);   // one turn = one 4/4 bar
-        t.setPosition (vs.beatsToTime (beats));
+        t.setPosition (vs.beatsToTime (std::max (0.0, vs.timeToBeats (t.getPosition()) + turns * 4.0)));
         owner.touched ("Jog", dawui::formatBarsBeats (vs.edit(), t.getPosition()));
     }
+
+    // ---------------------------------------------------------------- metering + state
     void timerCallback() override
     {
-        auto& t = transport();
+        auto& t = vs.edit().getTransport();
         auto set = [] (juce::Button& b, bool on) { if (b.getToggleState() != on) b.setToggleState (on, juce::dontSendNotification); };
-        set (rec, t.isRecording()); set (play, t.isPlaying()); set (stop, ! t.isPlaying() && ! t.isRecording());
-        set (cycle, t.looping.get()); set (drop, vs.edit().recordingPunchInOut.get()); set (click, vs.edit().clickTrackEnabled.get());
-        auto* sel = vs.getSelectedTrack(); set (solo, sel != nullptr && sel->isSolo (false));
-        set (editKey, owner.showEdit);
-        // hold rewind / fast-forward to keep moving
+        auto& arm = vs.edit().getAutomationRecordManager();
+        set (rec, t.isRecording()); set (play, t.isPlaying()); set (cycle, t.looping.get()); set (drop, vs.edit().recordingPunchInOut.get());
+        set (click, vs.edit().clickTrackEnabled.get());
+        set (autoWrite, arm.isWritingAutomation()); set (autoRead, arm.isReadingAutomation() && ! arm.isWritingAutomation()); set (autoOff, ! arm.isReadingAutomation() && ! arm.isWritingAutomation());
+        set (soft[1], owner.showEdit); set (soft[2], owner.shift); set (soft[3], vs.edit().engine.getMidiLearnState().isActive());
         for (auto [k, dir] : { std::pair<juce::Button*, int> { &rew, -1 }, { &ffwd, 1 } })
         {
             if (k->isDown())
             {
-                if (++holdTicks[dir > 0] > 6)
+                if (++holdTicks[dir > 0] > 9)
                 {
                     held = true;
-                    const double beats = std::max (0.0, vs.timeToBeats (t.getPosition()) + dir * 1.0);
-                    t.setPosition (vs.beatsToTime (beats));
+                    t.setPosition (vs.beatsToTime (std::max (0.0, vs.timeToBeats (t.getPosition()) + dir * 0.6)));
                     owner.touched (dir > 0 ? "Fast forward" : "Rewind", dawui::formatBarsBeats (vs.edit(), t.getPosition()));
                 }
             }
             else holdTicks[dir > 0] = 0;
         }
+        // master levels -> VU ballistics (~300 ms integration) + peak hold
+        if (auto* ctx = vs.edit().getCurrentPlaybackContext())
+        {
+            if (! masterAdded || masterCtx != ctx)
+            {
+                if (masterAdded && masterCtx != nullptr) masterCtx->masterLevels.removeClient (client);
+                ctx->masterLevels.addClient (client); masterAdded = true; masterCtx = ctx;
+            }
+            for (int c = 0; c < 2; ++c)
+            {
+                const float db = client.getAndClearAudioLevel (c).dB;
+                const float vu = db - vuRef - 3.0f;                         // peak -> approx. average, referenced to 0 VU
+                const float target = juce::jlimit (-25.0f, 4.0f, db < -99 ? -25.0f : vu);
+                vuDb[c] += (target - vuDb[c]) * 0.18f;
+                current[c] = db < -99 ? -100.0f : db;
+                if (current[c] > peak[c]) peak[c] = current[c];
+            }
+        }
+        canvas.repaint();
     }
+
+    // ---------------------------------------------------------------- drawing
+    void paintCanvas (juce::Graphics& g)
+    {
+        if (plate.isNull()) plate = makePlate();
+        g.drawImageAt (plate, 0, 0);
+        // screen
+        auto scr = juce::Rectangle<float> (30, 70, 400, 250);
+        g.setColour (juce::Colour (0xff1a1b1d)); g.fillRoundedRectangle (scr.expanded (6), 6.0f);
+        g.setColour (juce::Colour (0xff070809)); g.fillRect (scr);
+        // tab bar (soft key labels)
+        auto tabs = scr.removeFromTop (20.0f);
+        g.setColour (juce::Colour (0xff1c2448)); g.fillRect (tabs);
+        static const char* tabNames[] { "VU METERS", "EDIT", "SHIFT", "LEARN" };
+        for (int i = 0; i < 4; ++i)
+        {
+            auto tr = juce::Rectangle<float> (tabs.getX() + i * 100.0f, tabs.getY(), 100.0f, tabs.getHeight());
+            if (soft[i].getToggleState()) { g.setColour (juce::Colours::white); g.fillRect (tr.reduced (6, 2)); }
+            g.setColour (soft[i].getToggleState() ? juce::Colour (0xff1c2448) : juce::Colour (0xffd8dcf0));
+            g.setFont (VegaFonts::ui (11.0f, true)); g.drawText (tabNames[i], tr, juce::Justification::centred);
+        }
+        g.setColour (juce::Colour (0xff0b0e1c)); g.fillRect (scr);
+        // touched line
+        g.setColour (juce::Colour (0xffc9d2ff)); g.setFont (VegaFonts::ui (11.0f, true));
+        g.drawText (line1 + (line2.isNotEmpty() ? "   " + line2 : juce::String()), scr.removeFromTop (18.0f).reduced (8, 0).toNearestInt(), juce::Justification::centred, true);
+        // two VU meters
+        for (int c = 0; c < 2; ++c)
+        {
+            auto mr = juce::Rectangle<float> (scr.getX() + 12 + c * 194.0f, scr.getY() + 6, 182.0f, 118.0f);
+            g.setColour (juce::Colour (0xffd8dcf0)); g.setFont (VegaFonts::ui (11.0f, true));
+            g.drawText (c == 0 ? "L" : "R", mr.withHeight (12).translated (0, -4), juce::Justification::centred);
+            drawVu (g, mr.withTrimmedTop (10), vuDb[c]);
+            // current / max
+            auto rd = juce::Rectangle<float> (mr.getX(), mr.getBottom() + 4, mr.getWidth(), 34);
+            g.setFont (VegaFonts::ui (9.5f)); g.setColour (juce::Colour (0xff9aa3c8));
+            g.drawText ("current", rd.withWidth (rd.getWidth() / 2).withHeight (12), juce::Justification::centred);
+            g.setColour (juce::Colour (0xffff7a8a)); g.drawText ("max", rd.withTrimmedLeft (rd.getWidth() / 2).withHeight (12), juce::Justification::centred);
+            g.setFont (VegaFonts::ui (16.0f, true)); g.setColour (juce::Colours::white);
+            g.drawText (current[c] < -99 ? juce::String ("-inf") : juce::String (current[c], 1) + " dB", rd.withWidth (rd.getWidth() / 2).withTrimmedTop (12), juce::Justification::centred);
+            g.setColour (juce::Colour (0xffff5a6e));
+            g.drawText (peak[c] < -99 ? juce::String ("-inf") : juce::String (peak[c], 1) + " dB", rd.withTrimmedLeft (rd.getWidth() / 2).withTrimmedTop (12), juce::Justification::centred);
+        }
+        // bottom bar: what each encoder does
+        auto bar = juce::Rectangle<float> (scr.getX(), 300, scr.getWidth(), 20);
+        g.setColour (juce::Colour (0xff1c2448)); g.fillRect (bar);
+        for (int i = 0; i < 4; ++i)
+        {
+            juce::String value; const auto name = encLabel (i, value);
+            auto seg = juce::Rectangle<float> ((float) encX (i) - 48, bar.getY(), 96, bar.getHeight());
+            g.setColour (juce::Colour (0xff9aa3c8)); g.setFont (VegaFonts::ui (9.5f, true));
+            g.drawText (name, seg.withWidth (44).toNearestInt(), juce::Justification::centredRight);
+            g.setColour (juce::Colours::white); g.fillRect (seg.withTrimmedLeft (48).reduced (0, 3));
+            g.setColour (juce::Colour (0xff11152a)); g.drawText (value, seg.withTrimmedLeft (48).toNearestInt(), juce::Justification::centred);
+        }
+        g.setColour (juce::Colour (0xff3a3c40));
+        for (int i = 1; i < 4; ++i) g.fillRect ((float) encX (i) - 49, bar.getY() + 3, 1.0f, bar.getHeight() - 6);
+        // labels + channel arcs
+        g.setColour (juce::Colour (0xff1c1d20)); g.setFont (VegaFonts::ui (12.0f, true));
+        g.drawText ("CHANNEL", 50, 536, 120, 16, juce::Justification::centred);
+        {
+            juce::Path arc; arc.addCentredArc (110, 480, 62, 62, 0, -2.4f, -0.5f, true);
+            juce::Path arc2; arc2.addCentredArc (110, 480, 62, 62, 0, 0.5f, 2.4f, true);
+            g.strokePath (arc, juce::PathStrokeType (1.6f)); g.strokePath (arc2, juce::PathStrokeType (1.6f));
+            g.fillEllipse (110 - 62 * std::sin (2.4f) - 3, 480 + 62 * std::cos (2.4f) - 3, 6, 6);
+            g.fillEllipse (110 + 62 * std::sin (2.4f) - 3, 480 + 62 * std::cos (2.4f) - 3, 6, 6);
+        }
+        g.setFont (VegaFonts::ui (11.0f, true));
+        g.drawText ("BANK", 232, 518, 90, 14, juce::Justification::centred);
+        g.drawText ("LAYER", 332, 518, 40, 14, juce::Justification::centred);
+        g.drawText ("SCRUB", 376, 518, 52, 14, juce::Justification::centred);
+        g.fillRect (232.0f, 468.0f, 190.0f, 1.5f);
+        g.drawLine (240, 532, 252, 532, 1.2f); g.drawLine (302, 532, 314, 532, 1.2f);
+        // nav ring
+        {
+            juce::Path ring; ring.addEllipse (110 - 66, 635 - 66, 132, 132);
+            g.setColour (juce::Colours::white.withAlpha (0.85f)); g.strokePath (ring, juce::PathStrokeType (1.4f));
+        }
+        // function row labels
+        static const char* fn[] { "OFF", "READ", "WRT", "CYCLE", "CLICK", "DROP", "SHIFT" };
+        for (int i = 0; i < 7; ++i)
+        {
+            auto lr = juce::Rectangle<float> (36.0f + i * 56 - 4, 795, 46, 13);
+            g.setColour (juce::Colours::white.withAlpha (0.9f)); g.fillRect (lr);
+            g.setColour (juce::Colour (0xff1c1d20)); g.setFont (VegaFonts::ui (9.0f, true)); g.drawText (fn[i], lr, juce::Justification::centred);
+        }
+        // brand
+        g.setColour (juce::Colour (0xfff4f5f6)); g.setFont (juce::Font (juce::FontOptions ("Georgia", 20.0f, juce::Font::bold)));
+        g.drawText ("Vega Productions", 30, 856, 260, 22, juce::Justification::centredLeft);
+    }
+
+    void drawVu (juce::Graphics& g, juce::Rectangle<float> r, float vu)
+    {
+        // bezel + backlit face: warm blue glow from inside
+        g.setColour (juce::Colour (0xff2b2f38)); g.fillRoundedRectangle (r, 4.0f);
+        auto face = r.reduced (5.0f);
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffe3eeff), face.getCentreX(), face.getBottom() - 10, juce::Colour (0xff6f95d8), face.getX(), face.getY(), true));
+        g.fillRoundedRectangle (face, 2.0f);
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0x66ffe6b0), face.getCentreX(), face.getBottom(), juce::Colour (0x00ffe6b0), face.getCentreX(), face.getY(), false));
+        g.fillRoundedRectangle (face, 2.0f);                                           // warm lamp glow at the bottom
+        const juce::Point<float> pivot (face.getCentreX(), face.getBottom() + face.getHeight() * 0.55f);
+        const float rad = face.getHeight() * 1.18f;
+        auto angleFor = [] (float v)
+        {   // classic VU scale: -20 .. +3 spread over about 96 degrees, non-linear
+            const float n = std::pow (juce::Decibels::decibelsToGain (juce::jlimit (-20.0f, 3.0f, v)) / juce::Decibels::decibelsToGain (3.0f), 0.85f);
+            return juce::degreesToRadians (-48.0f + 96.0f * n);
+        };
+        // scale arcs
+        juce::Path arc; arc.addCentredArc (pivot.x, pivot.y, rad, rad, 0, angleFor (-20), angleFor (0), true);
+        g.setColour (juce::Colour (0xff1b2340)); g.strokePath (arc, juce::PathStrokeType (1.3f));
+        juce::Path red; red.addCentredArc (pivot.x, pivot.y, rad + 2, rad + 2, 0, angleFor (0), angleFor (3), true);
+        g.setColour (juce::Colour (0xffd23a3a)); g.strokePath (red, juce::PathStrokeType (4.0f));
+        g.setFont (VegaFonts::ui (8.5f, true));
+        for (float m : { -20.0f, -10.0f, -7.0f, -5.0f, -3.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f })
+        {
+            const float a = angleFor (m);
+            const auto p1 = pivot.getPointOnCircumference (rad, a), p2 = pivot.getPointOnCircumference (rad + 6, a), pl = pivot.getPointOnCircumference (rad + 14, a);
+            g.setColour (m > 0 ? juce::Colour (0xffc02a2a) : juce::Colour (0xff1b2340));
+            g.drawLine ({ p1, p2 }, 1.2f);
+            g.drawText (juce::String ((int) std::abs (m)), juce::Rectangle<float> (16, 10).withCentre (pl), juce::Justification::centred);
+        }
+        g.setColour (juce::Colour (0xff1b2340)); g.setFont (VegaFonts::ui (11.0f, true));
+        g.drawText ("VU", face.withTrimmedTop (face.getHeight() * 0.55f).withHeight (14), juce::Justification::centred);
+        g.setFont (VegaFonts::ui (7.5f)); g.drawText ("Vega Productions", face.withTrimmedTop (face.getHeight() * 0.72f).withHeight (10), juce::Justification::centred);
+        g.setFont (VegaFonts::ui (12.0f, true)); g.drawText ("-", face.reduced (6, 4).toNearestInt(), juce::Justification::bottomLeft);
+        g.setColour (juce::Colour (0xffc02a2a)); g.drawText ("+", face.reduced (6, 4).toNearestInt(), juce::Justification::bottomRight);
+        // needle (clipped to the face)
+        g.saveState(); g.reduceClipRegion (face.toNearestInt());
+        const float a = angleFor (vu);
+        const auto tip = pivot.getPointOnCircumference (rad + 4, a);
+        g.setColour (juce::Colours::black.withAlpha (0.25f)); g.drawLine ({ pivot.translated (2, 2), tip.translated (2, 2) }, 1.6f);
+        g.setColour (juce::Colour (0xff111318)); g.drawLine ({ pivot, tip }, 1.5f);
+        g.restoreState();
+        g.setColour (juce::Colour (0xff111318)); g.fillEllipse (face.getRight() - 12, face.getY() + 5, 6, 6);   // peak lamp housing
+        // glass
+        g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.18f), face.getX(), face.getY(), juce::Colours::transparentWhite, face.getX(), face.getCentreY(), false));
+        g.fillRoundedRectangle (face, 2.0f);
+    }
+
+    juce::Image makePlate()
+    {
+        juce::Image img (juce::Image::RGB, CW, CH, true);
+        juce::Graphics g (img);
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffb7babe), 0, 0, juce::Colour (0xff9b9fa4), (float) CW, (float) CH, false));
+        g.fillAll();
+        juce::Random rnd (7);
+        for (int y = 0; y < CH; ++y)         // brushed finish
+        {
+            g.setColour ((rnd.nextBool() ? juce::Colours::white : juce::Colours::black).withAlpha (0.02f + rnd.nextFloat() * 0.04f));
+            g.drawHorizontalLine (y, 0, (float) CW);
+        }
+        g.setColour (juce::Colours::black.withAlpha (0.35f)); g.drawRect (0, 0, CW, CH, 2);
+        for (auto [x, y] : { std::pair<int, int> { CW - 26, 170 }, { CW - 26, 640 } })   // screws
+        {
+            g.setColour (juce::Colour (0xff2a2b2e)); g.fillEllipse ((float) x - 9, (float) y - 9, 18, 18);
+            g.setColour (juce::Colour (0xff6a6d72)); g.fillEllipse ((float) x - 6, (float) y - 6, 12, 12);
+            g.setColour (juce::Colour (0xff1a1b1d)); g.drawLine ((float) x - 4, (float) y, (float) x + 4, (float) y, 1.5f);
+        }
+        return img;
+    }
+
     MixerView& owner; ViewState& vs;
-    tp::Key marker, nudge, cycle, drop, replace, click, solo, scrub, editKey { tp::Key::square, juce::Colour (0xff8ff3f0) };
-    tp::Key bankL { tp::Key::pill }, bankR { tp::Key::pill }, chanL { tp::Key::pill }, chanR { tp::Key::pill };
-    tp::Key up, down, left, right, zoom { tp::Key::square, juce::Colour (0xff8ff3f0) };
-    tp::BigKey rew { tp::BigKey::rew }, ffwd { tp::BigKey::ffwd }, stop { tp::BigKey::stop }, play { tp::BigKey::play }, rec { tp::BigKey::rec };
+    Canvas canvas; juce::Image plate;
+    uf::SoftKey soft[4];
+    uf::Encoder enc[4], channel;
+    uf::Key mode { uf::Key::text, "MODE", juce::Colour (0xfff7f06a), false }, page58 { uf::Key::text, "5-8", juce::Colour (0xfff7f06a), false },
+            chanL { uf::Key::left, {}, juce::Colour (0xfff7f06a), false }, chanR { uf::Key::right, {}, juce::Colour (0xfff7f06a), false },
+            bankL { uf::Key::left }, bankR { uf::Key::right }, layer { uf::Key::text, juce::String::fromUTF8 ("360\xc2\xb0"), juce::Colour (0xfff7f06a), false },
+            scrub { uf::Key::none, {}, juce::Colour (0xffff8a7a), false },
+            navUp { uf::Key::up, {}, juce::Colour (0xfff7f06a), false }, navDown { uf::Key::down, {}, juce::Colour (0xfff7f06a), false },
+            navLeft { uf::Key::left, {}, juce::Colour (0xfff7f06a), false }, navRight { uf::Key::right, {}, juce::Colour (0xfff7f06a), false },
+            navDot { uf::Key::dot, {}, juce::Colour (0xfff7f06a), false },
+            autoOff { uf::Key::left, {}, juce::Colour (0xfff7f06a) }, autoRead { uf::Key::right, {}, juce::Colour (0xff7dff5a) }, autoWrite { uf::Key::write, {}, juce::Colour (0xffff6a6a) },
+            cycle { uf::Key::loop, {}, juce::Colour (0xfff7f06a) }, click { uf::Key::metro, {}, juce::Colour (0xfff7f06a) }, drop { uf::Key::dropIn, {}, juce::Colour (0xffff8a7a) },
+            shiftKey { uf::Key::shiftUp, {}, juce::Colour (0xfff7f06a), false };
+    uf::TransportKey rew { uf::TransportKey::rew }, ffwd { uf::TransportKey::ffwd }, stop { uf::TransportKey::stop }, play { uf::TransportKey::play }, rec { uf::TransportKey::rec };
     tp::Jog jog;
-    juce::Rectangle<int> oled, transportBox, bankBox, shiftArea;
-    juce::String line1 { "Mode Select" }, line2 { "Mixer" };
-    int holdTicks[2] {}; bool held = false;
+    juce::String line1 { "Vega Productions" }, line2 { "Mixer" };
+    float vuRef = -18.0f, vuDb[2] { -25, -25 }, current[2] { -100, -100 }, peak[2] { -100, -100 };
+    double chanAcc = 0; int holdTicks[2] {}; bool held = false;
+    te::LevelMeasurer::Client client; bool masterAdded = false; te::EditPlaybackContext* masterCtx = nullptr;
 };
 
 //==============================================================================
@@ -997,7 +1301,7 @@ void MixerView::resized()
 {
     auto r = getLocalBounds().reduced (10, 8);
     const int h = r.getHeight() - 10;
-    panel->setBounds (r.removeFromLeft (ControlPanel::W).withHeight (h));
+    panel->setBounds (r.removeFromLeft (panel->widthForHeight (h)).withHeight (h));
     r.removeFromLeft (6);
     master->setBounds (r.removeFromRight (master->widthForHeight (h)).withHeight (h));
     r.removeFromRight (10);

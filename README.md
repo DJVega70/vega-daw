@@ -35,49 +35,29 @@ First run: **Options > Audio / MIDI settings** (pick ASIO / WASAPI on Windows, C
   - **The master fader.**
   - Everything is saved with the project. Double-click a knob to reset it.
 - **Each fader** has a scale and a level meter. Under the faders are two rows of lit pads: **Solo** and **Mute** (lit = playing).
-- **The left column** is a console-style transport section:
-  - a display showing the last control you touched;
-  - **MARKER** drops a marker at the playhead, or removes one that's there. Shift + ◀◀ / ▶▶ jumps between markers.
-  - **NUDGE** makes ◀◀ / ▶▶ move the selected clip by one grid step.
-  - **CYCLE** is loop. **DROP** is punch-in/out recording inside the cycle range.
-  - **REPLACE** makes MIDI recording replace notes instead of layering them.
-  - **CLICK** is the metronome. **SOLO** solos the selected track.
-  - **EDIT** shows or hides each channel's instrument, inserts and sends.
-  - **◀◀ ▶▶ ■ ▶ ●**: rewind and fast-forward move one bar (hold them to keep going), then stop, play and record.
-  - **FADER BANK ◀▶** moves 8 channels at a time; **CHANNEL ◀▶** moves 1.
-  - **The arrow pad** selects tracks (up/down) and moves the playhead by a bar (left/right). The cyan centre key switches it to zoom.
-  - **The jog wheel** moves the playhead. With **SCRUB** lit, it plays the audio as you turn it.
-  - Click the line above the pads to toggle **Shift**, which turns the pads into **Arm / Select**.
-
-![mixer](docs/mixer.png)
-
-## Download
-- **Windows:** https://github.com/DJVega70/vega-daw/releases/latest/download/VegaProductions-DAW-Windows.zip — unzip anywhere and run `Vega Productions DAW.exe`.
-- **Mac:** https://github.com/DJVega70/vega-daw/releases/latest/download/VegaProductions-DAW-macOS.zip — drag the app to Applications, then run once in Terminal: `xattr -cr "/Applications/Vega Productions DAW.app"`
-
-First run: **Options > Audio / MIDI settings** (pick ASIO / WASAPI on Windows, CoreAudio on Mac, and enable your MIDI keyboard), then open the **PLUGINS** panel (button at the top right, or press **B**). The DAW scans your standard VST3 folder (and AU on Mac) by itself on first launch and picks up newly installed plug-ins every time it starts. Use **FOLDERS** if you keep .vst3 files somewhere else.
-
-**Mixer (Tab)**, styled after a Launch Control XL:
-- **Each channel** has:
-  - three knob rows: Send A (pink), Send B (blue) and Pan (green), each with an LED that lights when the knob is in use;
-  - a long-throw fader with a scale and a level meter;
-  - two rows of lit pads: **Solo** (top) and **Mute** (bottom, lit = playing).
-- **The left column** has:
-  - a display showing the last control you touched;
-  - **Page ▲▼** to move 8 channels at a time;
-  - **Track ◀▶** to select the previous or next track;
-  - **Record / Play**;
-  - **Shift**, which turns the pads into **Arm / Select**;
-  - **Mode**, which shows or hides each channel's instrument and insert section.
-
-![mixer](docs/mixer.png)
-
-**AI stem separation**
-- Right-click an audio clip and choose **Separate stems (AI)...**, or use **File → Separate stems from a song (AI)...**.
-- Choose **4 stems** (Vocals, Drums, Bass, Other) or **6 stems** (also Guitar and Piano).
-- Each stem lands on its own coloured track, lined up exactly with the original clip, and the original clip is muted. The WAV files go to a **Stems** folder next to the project.
-- It uses Meta's Demucs v4 model, running locally on your CPU via [demucs.cpp](https://github.com/sevagh/demucs.cpp).
-- The model (84 MB, or 55 MB for 6 stems) is downloaded once, the first time you use it.
+- **The left column** is a console-style control unit, the same size as the master section:
+  - **Soft keys** (labels shown on the screen):
+    - **VU METERS**: click to reset the peak hold.
+    - **EDIT**: shows or hides each channel's instrument, inserts and sends.
+    - **SHIFT**: turns the pads into **Arm / Select**.
+    - **LEARN**: MIDI learn.
+  - **Screen:** two backlit VU meters on the master output, with warm-lit blue faces, moving needles and a red zone. Under each meter are the **current** and **max** levels. The top line shows the last control you touched.
+  - **4 encoders:** their jobs are shown on the bottom bar of the screen. Double-click one to reset it.
+    - Normally they control the selected track's **Volume / Pan / Filter**, plus the **VU reference** level.
+    - With **5-8** lit they control **Hi / Mid / Low** and the **Master** volume.
+  - **CHANNEL knob:** turn it to select tracks.
+  - **Key groups:**
+    - **MODE** switches the arrow keys to zoom.
+    - **◀ ▶** shift the mixer by one channel; **BANK ◀ ▶** move 8 channels.
+    - **360° LAYER** makes ◀◀ / ▶▶ nudge the selected clip by one grid step.
+    - **SCRUB** makes the jog wheel play the audio as you turn it.
+  - **Arrow cluster:** selects tracks and moves the playhead by a bar. The centre dot drops or removes a marker.
+  - **Jog wheel:** moves the playhead, or scrubs with SCRUB lit.
+  - **Function row:**
+    - **OFF / READ / WRT** set the automation mode.
+    - **CYCLE** is loop, **CLICK** is the metronome, **DROP** is punch-in.
+    - **SHIFT** makes ◀◀ / ▶▶ jump between markers.
+  - **Transport:** ◀◀ ▶▶ (hold to keep going) ■ ▶ ●. Play lights green and record lights red.
 
 **Stage 2**
 - **Automation:** press **A** on a track to open its lane and pick any parameter (volume, pan, the DJ EQ, plug-in knobs). Click to add points, drag to move them, and double-click or right-click to delete. Turn on **WRITE** in the transport, then press play and move a fader to record automation.
