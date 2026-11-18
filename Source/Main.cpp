@@ -7,6 +7,7 @@
 #include "Controllers.h"
 #include "PluginBrowser.h"
 #include "StemSeparator.h"
+#include "RoutingMatrix.h"
 
 //==============================================================================
 class TransportBar : public juce::Component, private juce::Timer
@@ -229,6 +230,7 @@ public:
             m.addSeparator(); m.addItem (33, "Delete selected track", vs.getSelectedTrack() != nullptr);
             m.addItem (34, "Show mixer   Tab", true, mixer.isVisible()); m.addItem (35, "Show piano roll", true, pianoRoll.isVisible());
             m.addItem (36, "Show plug-in browser   B", true, browser.isVisible());
+            m.addItem (39, "Routing matrix...");
             m.addSeparator();
             m.addItem (37, "Open instrument of selected track", vs.getSelectedTrack() != nullptr);
             m.addItem (38, "Plug-ins on selected track...", vs.getSelectedTrack() != nullptr);
@@ -278,6 +280,14 @@ public:
             case 46: showMappings(); break;
             case 47: showMcuSettings(); break;
             case 36: showBrowser (! browser.isVisible()); break;
+            case 39:
+            {
+                juce::DialogWindow::LaunchOptions o;
+                o.dialogTitle = "Routing matrix"; o.content.setOwned (new RoutingMatrix (session));
+                o.dialogBackgroundColour = juce::Colour (0xff1b1b1d); o.resizable = true; o.useNativeTitleBar = true;
+                o.launchAsync();
+                break;
+            }
             case 37: if (auto* t = vs.getSelectedTrack()) { auto* f = t->pluginList[0]; if (f != nullptr && f->isSynth()) dawui::openPlugin (f); else dawui::pluginChainMenu (session, *t, &transport); } break;
             case 38: if (auto* t = vs.getSelectedTrack()) dawui::pluginChainMenu (session, *t, &transport, [this] { mixer.rebuild(); }); break;
             case 44:

@@ -86,6 +86,12 @@ First run: **Options > Audio / MIDI settings** (pick ASIO / WASAPI on Windows, C
 - **Elastic audio (warp markers):** right-click an audio clip and turn on elastic audio. Ctrl/Cmd-click inside the clip to add a marker, drag a marker to stretch the audio around it, and double-click one to remove it.
 - **Freeze:** right-click a track header and choose Freeze to render its instrument and plug-ins to audio and save CPU.
 
+**Stage 3**
+- **Routing matrix (Track → Routing matrix...):**
+  - Every track and bus is listed down the side.
+  - **OUTPUT** columns route each track to the Master or to a bus.
+  - **SENDS** columns add or remove sends to each bus (−6 dB to start); drag up or down on a send to change its level.
+
 **Using plug-ins**
 - **Load:** in the PLUGINS panel, double-click a plug-in or drag it onto a track or mixer strip. Its window opens right away. An instrument goes on the selected instrument track, or on a new one. An effect goes on the selected track.
 - **Reopen:** every track header has an **INST** button that opens its instrument and an **FX** button that lists every plug-in on the track; click one to open it. In the mixer, click the instrument name or an insert slot.
