@@ -150,8 +150,9 @@ public:
         hub.onSelectTrack = [this] (te::AudioTrack* t) { vs.selectTrack (t); };
         hub.onSave = [this] { save (false); };
         hub.autoConnect();
+        juce::Timer::callAfterDelay (1200, [sp = juce::Component::SafePointer<MainComponent> (this)] { if (sp != nullptr) sp->autoDetectMcu(); });
         pianoRoll.onClose = [this] { showPianoRoll (false); };
-        session.onBeforeEditChange = [this] { mixer.clearAll(); };
+        session.onBeforeEditChange = [this] { engine.getExternalControllerManager().detachFromEdit (&session.edit()); mixer.clearAll(); };
         session.onEditChanged = [this] { arrange.editChanged(); mixer.rebuild(); hub.editChanged(); transport.refreshFromEdit(); setupInputs(); showPianoRoll (false); updateTitle(); };
         divider.onDrag = [this] (int dy) { pianoH = juce::jlimit (160, getHeight() - 240, pianoH - dy); resized(); };
         setupInputs();
@@ -160,7 +161,7 @@ public:
         setSize (1500, 900);
         startTimerHz (2);
     }
-    ~MainComponent() override { menuBar.setModel (nullptr); mixer.clearAll(); setLookAndFeel (nullptr); }
+    ~MainComponent() override { engine.getExternalControllerManager().detachFromEdit (&session.edit()); menuBar.setModel (nullptr); mixer.clearAll(); setLookAndFeel (nullptr); }
 
     DawSession& getSession() { return session; }
     std::function<void (juce::String)> onTitle;
@@ -236,6 +237,7 @@ public:
         {
             m.addItem (40, "Audio / MIDI settings..."); m.addItem (41, "Scan for new plug-ins"); m.addItem (45, "Advanced plug-in list...");
             m.addItem (46, "MIDI learn mappings...");
+            m.addItem (47, juce::String ("Mackie Control (MCU)...") + (mcuEnabled() ? "   - on" : ""));
             m.addItem (44, juce::String ("Controllers (FLkey 2 / HUI)...") + (hub.isConnected() ? "   - connected" : ""));
             m.addItem (42, "Metronome", true, session.edit().clickTrackEnabled.get());
             m.addItem (43, "Follow playhead", true, vs.followPlayhead);
@@ -274,6 +276,7 @@ public:
             case 41: showBrowser (true); browser.startScan (false); break;
             case 45: showPluginList(); break;
             case 46: showMappings(); break;
+            case 47: showMcuSettings(); break;
             case 36: showBrowser (! browser.isVisible()); break;
             case 37: if (auto* t = vs.getSelectedTrack()) { auto* f = t->pluginList[0]; if (f != nullptr && f->isSynth()) dawui::openPlugin (f); else dawui::pluginChainMenu (session, *t, &transport); } break;
             case 38: if (auto* t = vs.getSelectedTrack()) dawui::pluginChainMenu (session, *t, &transport, [this] { mixer.rebuild(); }); break;
@@ -424,6 +427,66 @@ private:
             juce::String (tracks.size()) + " stem tracks added" + (clip != nullptr ? " (the original clip is muted)." : ".") + "\n\nThe WAV files are in:\n" + outDir.getFullPathName());
     }
 
+    // ---------------------------------------------------------------- Mackie Control (Tracktion's built-in MCU driver)
+    te::ExternalController* mcu()
+    {
+        for (auto* c : engine.getExternalControllerManager().getControllers())
+            if (c->getControlSurfaceIfType<te::MackieMCU>() != nullptr) return c;
+        return nullptr;
+    }
+    bool mcuEnabled() { auto* c = mcu(); return c != nullptr && c->isEnabled() && c->getMidiInputDevice (0).isNotEmpty() && c->getMidiInputDevice (0) != te::ExternalController::getNoDeviceSelectedMessage(); }
+    bool isControllerPort (const juce::String& name)
+    {
+        for (auto* c : engine.getExternalControllerManager().getControllers())
+            if (c->isEnabled() && c->getMidiInputDevice (0) == name) return true;
+        return false;
+    }
+    /** First run: pick up an MCU-style surface by name */
+    void autoDetectMcu()
+    {
+        auto* c = mcu();
+        if (c == nullptr || mcuEnabled() || engine.getPropertyStorage().getAppPrefsFolder().getChildFile ("VegaMcuAsked").existsAsFile()) return;
+        static const char* hints[] { "X-Touch", "MCU", "Mackie", "iCON", "Platform", "QCon", "FaderPort", "Nektar" };
+        for (auto& in : c->getMidiInputPorts())
+            for (auto* h : hints)
+                if (in.containsIgnoreCase (h) && ! ControllerHub::looksLikeDawPort (in))
+                {
+                    juce::String out;
+                    for (auto& o : c->getMidiOutputPorts()) if (o.containsIgnoreCase (h)) { out = o; break; }
+                    c->setMidiInputDevice (0, in); if (out.isNotEmpty()) c->setBackChannelDevice (0, out); c->setEnabled (true);
+                    setupInputs();
+                    return;
+                }
+    }
+    void showMcuSettings()
+    {
+        auto* c = mcu();
+        if (c == nullptr) { juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Mackie Control", "Mackie Control support isn't available in this build."); return; }
+        auto* w = new juce::AlertWindow ("Mackie Control (MCU)",
+            "For control surfaces in Mackie Control mode: Behringer X-Touch / X-Touch One, iCON Platform, Mackie MCU Pro, "
+            "QCon, FaderPort (MCU mode)... Motor faders, V-pots, transport, banking, track names and meters follow the mixer.", juce::MessageBoxIconType::NoIcon);
+        auto ins = c->getMidiInputPorts(), outs = c->getMidiOutputPorts();
+        ins.insert (0, "(off)"); outs.insert (0, "(none)");
+        w->addComboBox ("in", ins, "MIDI input from the surface");
+        w->addComboBox ("out", outs, "MIDI output to the surface (faders, lights, display)");
+        if (auto* cb = w->getComboBoxComponent ("in")) { const int i = ins.indexOf (c->getMidiInputDevice (0)); cb->setSelectedItemIndex (c->isEnabled() && i > 0 ? i : 0); }
+        if (auto* cb = w->getComboBoxComponent ("out")) { const int i = outs.indexOf (c->getBackChannelDevice (0)); cb->setSelectedItemIndex (i > 0 ? i : 0); }
+        w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey)); w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int r)
+        {
+            std::unique_ptr<juce::AlertWindow> owner (w);
+            engine.getPropertyStorage().getAppPrefsFolder().getChildFile ("VegaMcuAsked").replaceWithText ("1");
+            if (r != 1) return;
+            auto* c2 = mcu(); if (c2 == nullptr) return;
+            const auto in = w->getComboBoxComponent ("in")->getText(), out = w->getComboBoxComponent ("out")->getText();
+            if (w->getComboBoxComponent ("in")->getSelectedItemIndex() <= 0) { c2->setEnabled (false); setupInputs(); return; }
+            c2->setMidiInputDevice (0, in);
+            c2->setBackChannelDevice (0, w->getComboBoxComponent ("out")->getSelectedItemIndex() > 0 ? out : te::ExternalController::getNoDeviceSelectedMessage());
+            c2->setEnabled (true);
+            setupInputs();
+        }), false);
+    }
+
     void showMappings()
     {
         auto& pcm = session.edit().getParameterControlMappings();
@@ -489,9 +552,11 @@ private:
         {
             // controller "DAW" ports carry HUI control data, not notes - leave them to the controller script
             if (ControllerHub::looksLikeDawPort (midiIn->getName()) || (hub.inputName.isNotEmpty() && midiIn->getName() == hub.inputName)) { midiIn->setEnabled (false); continue; }
+            if (isControllerPort (midiIn->getName())) continue;     // Mackie Control port: owned by the MCU driver, not a note input
             midiIn->setMonitorMode (te::InputDevice::MonitorMode::automatic); midiIn->setEnabled (true);
         }
         session.edit().getTransport().ensureContextAllocated();
+        engine.getExternalControllerManager().setCurrentEdit (&session.edit(), &selection);
         routeMidiToSelectedTrack();
     }
     // play your keyboard into whichever instrument track is selected
@@ -504,7 +569,7 @@ private:
             if (t == nullptr) return;
         }
         for (auto* in : session.edit().getAllInputDevices())
-            if (in->getInputDevice().getDeviceType() == te::InputDevice::physicalMidiDevice && ! te::isOnTargetTrack (*in, *t, 0))
+            if (in->getInputDevice().getDeviceType() == te::InputDevice::physicalMidiDevice && ! isControllerPort (in->getInputDevice().getName()) && ! te::isOnTargetTrack (*in, *t, 0))
                 [[maybe_unused]] auto r = in->setTarget (t->itemID, true, nullptr, 0);
     }
 
@@ -592,7 +657,7 @@ private:
 
     te::Engine& engine;
     VegaLookAndFeel lnf;
-    DawSession session; ViewState vs; ControllerHub hub;
+    DawSession session; te::SelectionManager selection { engine }; ViewState vs; ControllerHub hub;
     juce::MenuBarComponent menuBar;
     TransportBar transport; ArrangeView arrange; MixerView mixer; PianoRoll pianoRoll; PluginBrowser browser; Divider divider;
     int browserW = 250;

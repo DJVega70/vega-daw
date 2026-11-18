@@ -9,6 +9,8 @@ static const juce::Identifier busNumProp ("vegaBusNumber");
 DawSession::DawSession (te::Engine& e) : engine (e)
 {
     static std::set<te::Engine*> registered;   // built-in types must be registered once per engine, before any edit loads
+    // control surfaces (Mackie MCU...) see the DAW's audio / instrument / bus tracks, in order
+    e.getExternalControllerManager().isVisibleOnControlSurface = [] (const te::Track& t) { return dynamic_cast<const te::AudioTrack*> (&t) != nullptr; };
     if (registered.insert (&e).second) { e.getPluginManager().createBuiltInType<VegaDJEQPlugin>(); e.getPluginManager().createBuiltInType<VegaMasterStripPlugin>(); }
     newProject();
 }

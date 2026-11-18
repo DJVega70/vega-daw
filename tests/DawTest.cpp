@@ -422,6 +422,24 @@ int main()
         check (pcm2.getNumControllerIDs() >= 1 && dj2->filter->getCurrentValue() > 0.9f, "MIDI mappings saved with the project");
         pf.deleteFile();
     }
+    {   // Mackie Control: Tracktion's MCU driver moves our faders
+        DawSession mc (engine);
+        te::SelectionManager sel (engine);
+        auto& ecm = engine.getExternalControllerManager();
+        ecm.setCurrentEdit (&mc.edit(), &sel);
+        te::MackieMCU* mcuSurface = nullptr;
+        for (auto* c : ecm.getControllers()) if (auto* m = c->getControlSurfaceIfType<te::MackieMCU>()) mcuSurface = m;
+        check (mcuSurface != nullptr, "Mackie Control (MCU) driver is available");
+        if (mcuSurface != nullptr)
+        {
+            auto* t1 = mc.getTracks()[0];
+            t1->getVolumePlugin()->setVolumeDb (-30.0f);
+            mcuSurface->acceptMidiMessage (0, juce::MidiMessage::pitchWheel (1, 16383));   // fader 1 to the top
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
+            check (t1->getVolumePlugin()->getVolumeDb() > -1.0f, "MCU fader 1 moves track 1's volume (" + juce::String (t1->getVolumePlugin()->getVolumeDb(), 1) + " dB)");
+        }
+        ecm.detachFromEdit (&mc.edit());
+    }
     out.deleteFile(); proj.deleteFile();
     std::cout << (fails == 0 ? "ALL PASSED" : "FAILURES: " + std::to_string (fails)) << "\n";
     return fails == 0 ? 0 : 1;
