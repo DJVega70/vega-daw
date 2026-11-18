@@ -700,10 +700,10 @@ public:
         g.setColour (juce::Colours::black.withAlpha (0.35f)); g.fillRoundedRectangle (r.translated (0, 2.0f), 3.0f);
         if (getToggleState())
         {
-            g.setColour (juce::Colour (0xff7dff5a).withAlpha (0.35f)); g.fillRoundedRectangle (r.expanded (3.0f), 5.0f);
-            g.setGradientFill (juce::ColourGradient (juce::Colour (0xffa6ff8a), 0, r.getY(), juce::Colour (0xff4fd83a), 0, r.getBottom(), false));
+            g.setColour (juce::Colour (0xfffff0c8).withAlpha (0.35f)); g.fillRoundedRectangle (r.expanded (3.0f), 5.0f);
+            g.setGradientFill (juce::ColourGradient (juce::Colour (0xfffff0c8), r.getCentreX(), r.getCentreY(), juce::Colour (0xffffc860), r.getX(), r.getY(), true));
         }
-        else g.setGradientFill (juce::ColourGradient (juce::Colour (down ? 0xffd8dadd : over ? 0xfffafbfc : 0xfff0f1f3), 0, r.getY(), juce::Colour (0xffc9ccd0), 0, r.getBottom(), false));
+        else g.setGradientFill (juce::ColourGradient (juce::Colour (down ? 0xffa8a8ac : over ? 0xffd2d2d6 : 0xffc4c4c8), 0, r.getY(), juce::Colour (0xff8e8e92), 0, r.getBottom(), false));
         g.fillRoundedRectangle (r, 3.0f);
         g.setColour (juce::Colours::black.withAlpha (0.25f)); g.drawRoundedRectangle (r, 3.0f, 1.0f);
     }
@@ -714,8 +714,8 @@ class Key : public juce::Button
 {
 public:
     enum Icon { none, left, right, up, down, dot, loop, metro, dropIn, shiftUp, write, text };
-    Key (Icon i = none, juce::String t = {}, juce::Colour litCol = juce::Colour (0xfff7f06a), bool darkFace = true)
-        : juce::Button (t), icon (i), lit (litCol), dark (darkFace) {}
+    Key (Icon i = none, juce::String t = {}, juce::Colour litCol = juce::Colour (0xffffd98a), bool darkFace = false)
+        : juce::Button (t), icon (i), lit (litCol), dark (false) { juce::ignoreUnused (darkFace); }
     Icon icon; juce::Colour lit; bool dark;
     void paintButton (juce::Graphics& g, bool over, bool isDown) override
     {
@@ -725,8 +725,8 @@ public:
         g.setColour (juce::Colour (0xff17181a)); g.fillRoundedRectangle (r, 3.0f);                           // bezel
         auto face = r.reduced (3.0f);
         if (on) { g.setColour (lit.withAlpha (0.4f)); g.fillRoundedRectangle (r.expanded (2.0f), 4.0f); }
-        juce::Colour top = on ? lit.brighter (0.2f) : dark ? juce::Colour (isDown ? 0xff2a2c30 : over ? 0xff3b3e43 : 0xff33363a) : juce::Colour (isDown ? 0xffcfd2d6 : over ? 0xfff6f7f8 : 0xffe9ebee);
-        juce::Colour bot = on ? lit.darker (0.2f) : dark ? juce::Colour (0xff222427) : juce::Colour (0xffc2c5ca);
+        juce::Colour top = on ? lit.brighter (0.2f) : dark ? juce::Colour (isDown ? 0xff2a2c30 : over ? 0xff3b3e43 : 0xff33363a) : juce::Colour (isDown ? 0xffa8a8ac : over ? 0xffd2d2d6 : 0xffc4c4c8);
+        juce::Colour bot = on ? lit.darker (0.2f) : dark ? juce::Colour (0xff222427) : juce::Colour (0xff8e8e92);
         g.setGradientFill (juce::ColourGradient (top, 0, face.getY(), bot, 0, face.getBottom(), false));
         g.fillRoundedRectangle (face, 2.0f);
         const auto ink = on || ! dark ? juce::Colour (0xff1c1d20) : juce::Colour (0xffe9eaec);
@@ -774,7 +774,7 @@ public:
         g.setColour (juce::Colours::black.withAlpha (0.45f)); g.fillRoundedRectangle (r.translated (0, 3.0f), 4.0f);
         g.setColour (juce::Colour (0xff1a1b1d)); g.fillRoundedRectangle (r, 4.0f);
         auto face = r.reduced (3.0f);
-        juce::Colour top = juce::Colour (down ? 0xffd2d5d9 : over ? 0xfffbfcfd : 0xfff1f2f4), bot = juce::Colour (0xffc8cbd0);
+        juce::Colour top = juce::Colour (down ? 0xffb8b8bc : over ? 0xffe2e2e6 : 0xffd2d2d6), bot = juce::Colour (0xff8a8a8e);
         if (on && icon == play) { top = juce::Colour (0xff8cff6c); bot = juce::Colour (0xff3fcf32); g.setColour (juce::Colour (0x667dff5a)); g.fillRoundedRectangle (r.expanded (3.0f), 6.0f); }
         if (on && icon == rec)  { top = juce::Colour (0xffff7a7a); bot = juce::Colour (0xffe03a3a); g.setColour (juce::Colour (0x66ff4040)); g.fillRoundedRectangle (r.expanded (3.0f), 6.0f); }
         g.setGradientFill (juce::ColourGradient (top, 0, face.getY(), bot, 0, face.getBottom(), false));
@@ -803,25 +803,27 @@ public:
     std::function<void()> onReset;
     void paint (juce::Graphics& g) override
     {
-        auto r = getLocalBounds().toFloat().reduced (3.0f);
-        const auto c = r.getCentre(); const float rad = std::min (r.getWidth(), r.getHeight()) * 0.5f;
-        g.setColour (juce::Colours::black.withAlpha (0.45f)); g.fillEllipse (juce::Rectangle<float> (rad * 2, rad * 2).withCentre (c.translated (0, 4)));
-        // knurled chrome skirt
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff4f5f6), c.x - rad, c.y - rad, juce::Colour (0xff6d7075), c.x + rad, c.y + rad, false));
-        g.fillEllipse (juce::Rectangle<float> (rad * 2, rad * 2).withCentre (c));
-        for (int i = 0; i < 48; ++i)
+        // same look as the master section's knobs: ring of dots, grey skirt, dark cap, white pointer
+        auto r = getLocalBounds().toFloat();
+        const auto c = r.getCentre(); const float outer = std::min (r.getWidth(), r.getHeight()) * 0.5f;
+        g.setColour (juce::Colours::white.withAlpha (0.45f));
+        for (int i = 0; i < 24; ++i)
         {
-            const float a = i * juce::MathConstants<float>::twoPi / 48.0f + angle;
-            g.setColour (juce::Colours::black.withAlpha (i % 2 ? 0.18f : 0.05f));
-            g.drawLine (c.x + std::sin (a) * rad * 0.8f, c.y - std::cos (a) * rad * 0.8f, c.x + std::sin (a) * rad, c.y - std::cos (a) * rad, 1.0f);
+            const float a = i * juce::MathConstants<float>::twoPi / 24.0f;
+            g.fillEllipse (juce::Rectangle<float> (2.0f, 2.0f).withCentre ({ c.x + std::sin (a) * outer * 0.95f, c.y - std::cos (a) * outer * 0.95f }));
         }
-        // black top
-        const float tr = rad * 0.72f;
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff3a3c40), c.x, c.y - tr, juce::Colour (0xff0e0f11), c.x, c.y + tr, false));
-        g.fillEllipse (juce::Rectangle<float> (tr * 2, tr * 2).withCentre (c));
-        g.setColour (juce::Colours::white.withAlpha (0.1f)); g.drawEllipse (juce::Rectangle<float> (tr * 2, tr * 2).withCentre (c), 1.0f);
-        g.setColour (juce::Colours::white.withAlpha (0.85f));
-        g.fillEllipse (juce::Rectangle<float> (3.5f, 3.5f).withCentre ({ c.x + std::sin (angle) * tr * 0.72f, c.y - std::cos (angle) * tr * 0.72f }));
+        const float d = outer * 1.5f;
+        auto skirt = juce::Rectangle<float> (d, d).withCentre (c);
+        g.setColour (juce::Colours::black.withAlpha (0.45f)); g.fillEllipse (skirt.translated (0, 3.0f).expanded (1.0f));
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffd6d6d8), skirt.getX(), skirt.getY(), juce::Colour (0xff6c6c70), skirt.getRight(), skirt.getBottom(), false));
+        g.fillEllipse (skirt);
+        auto cap = skirt.reduced (d * 0.16f).translated (0, -d * 0.04f);
+        const auto capCol = console::black;
+        g.setGradientFill (juce::ColourGradient (capCol.brighter (0.45f), cap.getX(), cap.getY(), capCol.darker (0.35f), cap.getRight(), cap.getBottom(), true));
+        g.fillEllipse (cap);
+        g.setColour (juce::Colours::white.withAlpha (0.18f)); g.fillEllipse (cap.reduced (cap.getWidth() * 0.22f).translated (-cap.getWidth() * 0.1f, -cap.getHeight() * 0.12f));
+        g.setColour (juce::Colours::white);
+        g.drawLine (c.x + std::sin (angle) * d * 0.12f, c.y - std::cos (angle) * d * 0.12f, c.x + std::sin (angle) * d * 0.47f, c.y - std::cos (angle) * d * 0.47f, 2.4f);
     }
     void mouseDown (const juce::MouseEvent& e) override { lastY = e.position.y; }
     void mouseDrag (const juce::MouseEvent& e) override
@@ -1099,7 +1101,8 @@ private:
         g.drawImageAt (plate, 0, 0);
         // screen
         auto scr = juce::Rectangle<float> (30, 70, 400, 250);
-        g.setColour (juce::Colour (0xff1a1b1d)); g.fillRoundedRectangle (scr.expanded (6), 6.0f);
+        g.setColour (juce::Colour (0xff121214)); g.fillRoundedRectangle (scr.expanded (6), 6.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.35f)); g.drawRoundedRectangle (scr.expanded (6), 6.0f, 2.0f);
         g.setColour (juce::Colour (0xff070809)); g.fillRect (scr);
         // tab bar (soft key labels)
         auto tabs = scr.removeFromTop (20.0f);
@@ -1148,7 +1151,7 @@ private:
         g.setColour (juce::Colour (0xff3a3c40));
         for (int i = 1; i < 4; ++i) g.fillRect ((float) encX (i) - 49, bar.getY() + 3, 1.0f, bar.getHeight() - 6);
         // labels + channel arcs
-        g.setColour (juce::Colour (0xff1c1d20)); g.setFont (VegaFonts::ui (12.0f, true));
+        g.setColour (console::ink); g.setFont (VegaFonts::ui (12.0f, true));
         g.drawText ("CHANNEL", 50, 536, 120, 16, juce::Justification::centred);
         {
             juce::Path arc; arc.addCentredArc (110, 480, 62, 62, 0, -2.4f, -0.5f, true);
@@ -1161,7 +1164,7 @@ private:
         g.drawText ("BANK", 232, 518, 90, 14, juce::Justification::centred);
         g.drawText ("LAYER", 332, 518, 40, 14, juce::Justification::centred);
         g.drawText ("SCRUB", 376, 518, 52, 14, juce::Justification::centred);
-        g.fillRect (232.0f, 468.0f, 190.0f, 1.5f);
+        g.setColour (console::line); g.fillRect (232.0f, 468.0f, 190.0f, 2.0f); g.setColour (console::ink);
         g.drawLine (240, 532, 252, 532, 1.2f); g.drawLine (302, 532, 314, 532, 1.2f);
         // nav ring
         {
@@ -1173,12 +1176,13 @@ private:
         for (int i = 0; i < 7; ++i)
         {
             auto lr = juce::Rectangle<float> (36.0f + i * 56 - 4, 795, 46, 13);
-            g.setColour (juce::Colours::white.withAlpha (0.9f)); g.fillRect (lr);
-            g.setColour (juce::Colour (0xff1c1d20)); g.setFont (VegaFonts::ui (9.0f, true)); g.drawText (fn[i], lr, juce::Justification::centred);
+            g.setColour (console::inkDim); g.setFont (VegaFonts::ui (9.5f, true)); g.drawText (fn[i], lr, juce::Justification::centred);
         }
         // brand
-        g.setColour (juce::Colour (0xfff4f5f6)); g.setFont (juce::Font (juce::FontOptions ("Georgia", 20.0f, juce::Font::bold)));
-        g.drawText ("Vega Productions", 30, 856, 260, 22, juce::Justification::centredLeft);
+        g.setColour (console::line); g.fillRect (24.0f, 752.0f, (float) CW - 48, 2.0f);
+        g.setColour (console::inkDim); g.setFont (VegaFonts::ui (11.0f, true));
+        g.drawText ("Vega Productions", 30, 858, 200, 14, juce::Justification::centredLeft);
+        g.setFont (VegaFonts::ui (9.5f)); g.drawText ("CONTROL SECTION", CW - 230, 858, 200, 14, juce::Justification::centredRight);
     }
 
     void drawVu (juce::Graphics& g, juce::Rectangle<float> r, float vu)
@@ -1233,19 +1237,20 @@ private:
     {
         juce::Image img (juce::Image::RGB, CW, CH, true);
         juce::Graphics g (img);
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffb7babe), 0, 0, juce::Colour (0xff9b9fa4), (float) CW, (float) CH, false));
+        // same finish as the master section's side panels
+        g.setGradientFill (juce::ColourGradient (console::panelTop, 0, 0, console::panelBot, 0, (float) CH, false));
         g.fillAll();
         juce::Random rnd (7);
-        for (int y = 0; y < CH; ++y)         // brushed finish
+        for (int y = 0; y < CH; ++y)         // very fine grain
         {
-            g.setColour ((rnd.nextBool() ? juce::Colours::white : juce::Colours::black).withAlpha (0.02f + rnd.nextFloat() * 0.04f));
+            g.setColour ((rnd.nextBool() ? juce::Colours::white : juce::Colours::black).withAlpha (0.008f + rnd.nextFloat() * 0.012f));
             g.drawHorizontalLine (y, 0, (float) CW);
         }
         g.setColour (juce::Colours::black.withAlpha (0.35f)); g.drawRect (0, 0, CW, CH, 2);
         for (auto [x, y] : { std::pair<int, int> { CW - 26, 170 }, { CW - 26, 640 } })   // screws
         {
-            g.setColour (juce::Colour (0xff2a2b2e)); g.fillEllipse ((float) x - 9, (float) y - 9, 18, 18);
-            g.setColour (juce::Colour (0xff6a6d72)); g.fillEllipse ((float) x - 6, (float) y - 6, 12, 12);
+            g.setColour (juce::Colour (0xff1e1e20)); g.fillEllipse ((float) x - 9, (float) y - 9, 18, 18);
+            g.setColour (juce::Colour (0xff55555a)); g.fillEllipse ((float) x - 6, (float) y - 6, 12, 12);
             g.setColour (juce::Colour (0xff1a1b1d)); g.drawLine ((float) x - 4, (float) y, (float) x + 4, (float) y, 1.5f);
         }
         return img;
@@ -1255,16 +1260,16 @@ private:
     Canvas canvas; juce::Image plate;
     uf::SoftKey soft[4];
     uf::Encoder enc[4], channel;
-    uf::Key mode { uf::Key::text, "MODE", juce::Colour (0xfff7f06a), false }, page58 { uf::Key::text, "5-8", juce::Colour (0xfff7f06a), false },
-            chanL { uf::Key::left, {}, juce::Colour (0xfff7f06a), false }, chanR { uf::Key::right, {}, juce::Colour (0xfff7f06a), false },
-            bankL { uf::Key::left }, bankR { uf::Key::right }, layer { uf::Key::text, juce::String::fromUTF8 ("360\xc2\xb0"), juce::Colour (0xfff7f06a), false },
+    uf::Key mode { uf::Key::text, "MODE", juce::Colour (0xffffd98a), false }, page58 { uf::Key::text, "5-8", juce::Colour (0xffffd98a), false },
+            chanL { uf::Key::left, {}, juce::Colour (0xffffd98a), false }, chanR { uf::Key::right, {}, juce::Colour (0xffffd98a), false },
+            bankL { uf::Key::left }, bankR { uf::Key::right }, layer { uf::Key::text, juce::String::fromUTF8 ("360\xc2\xb0"), juce::Colour (0xffffd98a), false },
             scrub { uf::Key::none, {}, juce::Colour (0xffff8a7a), false },
-            navUp { uf::Key::up, {}, juce::Colour (0xfff7f06a), false }, navDown { uf::Key::down, {}, juce::Colour (0xfff7f06a), false },
-            navLeft { uf::Key::left, {}, juce::Colour (0xfff7f06a), false }, navRight { uf::Key::right, {}, juce::Colour (0xfff7f06a), false },
-            navDot { uf::Key::dot, {}, juce::Colour (0xfff7f06a), false },
-            autoOff { uf::Key::left, {}, juce::Colour (0xfff7f06a) }, autoRead { uf::Key::right, {}, juce::Colour (0xff7dff5a) }, autoWrite { uf::Key::write, {}, juce::Colour (0xffff6a6a) },
-            cycle { uf::Key::loop, {}, juce::Colour (0xfff7f06a) }, click { uf::Key::metro, {}, juce::Colour (0xfff7f06a) }, drop { uf::Key::dropIn, {}, juce::Colour (0xffff8a7a) },
-            shiftKey { uf::Key::shiftUp, {}, juce::Colour (0xfff7f06a), false };
+            navUp { uf::Key::up, {}, juce::Colour (0xffffd98a), false }, navDown { uf::Key::down, {}, juce::Colour (0xffffd98a), false },
+            navLeft { uf::Key::left, {}, juce::Colour (0xffffd98a), false }, navRight { uf::Key::right, {}, juce::Colour (0xffffd98a), false },
+            navDot { uf::Key::dot, {}, juce::Colour (0xffffd98a), false },
+            autoOff { uf::Key::left, {}, juce::Colour (0xffffd98a) }, autoRead { uf::Key::right, {}, juce::Colour (0xff7dff5a) }, autoWrite { uf::Key::write, {}, juce::Colour (0xffff6a6a) },
+            cycle { uf::Key::loop, {}, juce::Colour (0xffffd98a) }, click { uf::Key::metro, {}, juce::Colour (0xffffd98a) }, drop { uf::Key::dropIn, {}, juce::Colour (0xffff8a7a) },
+            shiftKey { uf::Key::shiftUp, {}, juce::Colour (0xffffd98a), false };
     uf::TransportKey rew { uf::TransportKey::rew }, ffwd { uf::TransportKey::ffwd }, stop { uf::TransportKey::stop }, play { uf::TransportKey::play }, rec { uf::TransportKey::rec };
     tp::Jog jog;
     juce::String line1 { "Vega Productions" }, line2 { "Mixer" };
