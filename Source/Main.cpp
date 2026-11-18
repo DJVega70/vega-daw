@@ -19,7 +19,9 @@ public:
             b.setButtonText (t); b.setColour (juce::TextButton::buttonOnColourId, on); addAndMakeVisible (b);
         };
         btn (home, juce::String::fromUTF8 ("\xe2\x8f\xae")); btn (play, juce::String::fromUTF8 ("\xe2\x96\xb6")); btn (stop, juce::String::fromUTF8 ("\xe2\x96\xa0"));
-        btn (rec, juce::String::fromUTF8 ("\xe2\x97\x8f"), juce::Colour (0xffe04848)); btn (loop, "LOOP"); btn (click, "CLICK");
+        btn (rec, juce::String::fromUTF8 ("\xe2\x97\x8f"), juce::Colour (0xffe04848)); btn (loop, "LOOP"); btn (click, "CLICK"); btn (autoWrite, "WRITE", juce::Colour (0xffe8a23a));
+        autoWrite.setTooltip ("Automation write: while playing, moving faders, pans, EQ and plug-in knobs records automation");
+        autoWrite.onClick = [this] { auto& arm = vs.edit().getAutomationRecordManager(); arm.setWritingAutomation (! arm.isWritingAutomation()); };
         btn (view, "MIXER"); btn (browse, "PLUGINS"); btn (addAudio, "+ AUDIO"); btn (addInst, "+ INSTRUMENT"); btn (addBus, "+ BUS");
         home.onClick = [this] { vs.edit().getTransport().setPosition (0s); };
         play.onClick = [this] { auto& t = vs.edit().getTransport(); if (t.isPlaying()) t.stop (false, false); else t.play (false); };
@@ -69,7 +71,7 @@ public:
     {
         int x = 8; const int y = 8, h = getHeight() - 16;
         for (auto* b : { &home, &play, &stop, &rec }) { b->setBounds (x, y, 40, h); x += 44; }
-        loop.setBounds (x + 6, y, 58, h); x += 70; click.setBounds (x, y, 60, h); x += 70;
+        loop.setBounds (x + 6, y, 58, h); x += 70; click.setBounds (x, y, 60, h); x += 66; autoWrite.setBounds (x, y, 62, h); x += 72;
         display = { x, y - 2, 260, h + 4 }; x += 270;
         tempo.setBounds (x, y, 110, h); x += 116; sig.setBounds (x, y, 70, h); x += 76; snap.setBounds (x, y, 112, h); x += 120;
         cpuArea = { x + 4, y, 60, h }; x += 74;
@@ -95,12 +97,13 @@ private:
         rec.setToggleState (tr.isRecording(), juce::dontSendNotification);
         loop.setToggleState (tr.looping.get(), juce::dontSendNotification);
         click.setToggleState (vs.edit().clickTrackEnabled.get(), juce::dontSendNotification);
+        autoWrite.setToggleState (vs.edit().getAutomationRecordManager().isWritingAutomation(), juce::dontSendNotification);
         if (! tempo.isMouseButtonDown() && ! tempo.hasKeyboardFocus (true)) tempo.setValue (vs.session.getTempo(), juce::dontSendNotification);
         if (barSnap) vs.snapDiv = 0;
         repaint (display); repaint (cpuArea);
     }
     ViewState& vs;
-    juce::TextButton home, play, stop, rec, loop, click, view, addAudio, addInst, addBus, browse;
+    juce::TextButton home, play, stop, rec, loop, click, view, addAudio, addInst, addBus, browse, autoWrite;
     juce::Slider tempo; juce::ComboBox sig, snap;
     juce::Rectangle<int> display, cpuArea;
 };

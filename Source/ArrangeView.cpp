@@ -39,9 +39,26 @@ public:
             else dawui::pluginChainMenu (owner.vs.session, *track, &instBtn, [this] { repaint(); });
         };
         fxBtn.onClick = [this] { owner.vs.selectTrack (track.get()); dawui::pluginChainMenu (owner.vs.session, *track, &fxBtn, [this] { refresh(); }); };
+        // automation lane
+        setup (autoBtn, "A", VegaColours::accentDim);
+        autoBtn.setTooltip ("Show / hide this track's automation lane");
+        autoBtn.onClick = [this]
+        {
+            track->state.setProperty ("vegaAutoShown", ! (bool) track->state.getProperty ("vegaAutoShown", false), nullptr);
+            owner.resized(); owner.repaint();
+        };
+        laneParamBox.onChange = [this]
+        {
+            const int i = laneParamBox.getSelectedId() - 1;
+            if (juce::isPositiveAndBelow (i, laneParams.size())) track->state.setProperty ("vegaAutoParam", dawui::paramKey (*laneParams[i]), nullptr);
+            owner.repaint();
+        };
+        addChildComponent (laneParamBox);
         vol.setSliderStyle (juce::Slider::LinearBar); vol.setRange (-60.0, 6.0, 0.1); vol.setSkewFactorFromMidPoint (-12.0);
         vol.setTextValueSuffix (" dB"); vol.setColour (juce::Slider::trackColourId, DawSession::trackColour (t).withAlpha (0.45f));
         vol.onValueChange = [this] { if (auto vp = track->getVolumePlugin()) vp->setVolumeDb ((float) vol.getValue()); };
+        vol.onDragStart = [this] { if (auto vp = track->getVolumePlugin()) dawui::gesture (vp->volParam.get(), true); };
+        vol.onDragEnd   = [this] { if (auto vp = track->getVolumePlugin()) dawui::gesture (vp->volParam.get(), false); };
         addAndMakeVisible (vol);
         refresh();
     }
@@ -72,17 +89,30 @@ public:
             if (auto* p = track->pluginList[0]; p != nullptr && p->isSynth()) sub = p->getName().toUpperCase();
         if (auto* out = owner.vs.session.getOutputBus (*track)) sub << "  >  " << out->getName().toUpperCase();
         g.drawText (sub, 12, 26, getWidth() - 20, 12, juce::Justification::left);
+        if (const int lh = owner.laneHeight (*track); lh > 0)
+        {
+            const int ch = owner.clipHeight (*track);
+            g.setColour (juce::Colour (0xff1a1d1d)); g.fillRect (5, ch, getWidth() - 5, lh - 1);
+            g.setColour (VegaColours::textDim); g.setFont (VegaFonts::ui (9.0f, true));
+            g.drawText ("AUTOMATION", 12, ch + 34, getWidth() - 20, 12, juce::Justification::left);
+        }
     }
     void resized() override
     {
         auto top = juce::Rectangle<int> (8, 4, getWidth() - 16, 22);
         fxBtn.setBounds (top.removeFromRight (38).reduced (0, 1)); top.removeFromRight (3);
+        autoBtn.setBounds (top.removeFromRight (24).reduced (0, 1)); top.removeFromRight (3);
         if (instBtn.isVisible()) { instBtn.setBounds (top.removeFromRight (40).reduced (0, 1)); top.removeFromRight (3); }
         name.setBounds (top);
         auto row = juce::Rectangle<int> (10, 42, getWidth() - 20, 22);
         for (auto* b : { &mute, &solo, &arm, &input }) { if (! b->isVisible()) continue; b->setBounds (row.removeFromLeft (b == &input ? 34 : 26)); row.removeFromLeft (4); }
         vol.setBounds (row.withTrimmedLeft (4));
-        if (getHeight() < 70) { vol.setVisible (false); } else vol.setVisible (true);
+        const int ch = owner.clipHeight (*track);
+        if (ch < 70) { vol.setVisible (false); } else vol.setVisible (true);
+        const bool lane = owner.laneHeight (*track) > 0;
+        autoBtn.setToggleState (lane, juce::dontSendNotification);
+        laneParamBox.setVisible (lane);
+        if (lane) { refreshLaneParams(); laneParamBox.setBounds (10, ch + 8, getWidth() - 20, 22); }
     }
     void mouseDown (const juce::MouseEvent& e) override
     {
@@ -98,7 +128,7 @@ public:
         if (dragStartY - getScreenY() > getHeight() - 10 || resizing)
         {
             resizing = true;
-            track->state.setProperty ("vegaHeight", juce::jlimit (44, 260, e.getScreenY() - getScreenY()), nullptr);
+            track->state.setProperty ("vegaHeight", juce::jlimit (44, 260, e.getScreenY() - getScreenY() - owner.laneHeight (*track)), nullptr);
             owner.resized(); return;
         }
         auto p = owner.getLocalPoint (nullptr, e.getScreenPosition());
@@ -206,7 +236,17 @@ private:
         });
     }
     ArrangeView& owner;
-    juce::Label name; juce::TextButton mute, solo, arm, input, instBtn, fxBtn; juce::Slider vol;
+    juce::Label name; juce::TextButton mute, solo, arm, input, instBtn, fxBtn, autoBtn; juce::Slider vol;
+    juce::ComboBox laneParamBox; juce::Array<te::AutomatableParameter*> laneParams;
+    void refreshLaneParams()
+    {
+        laneParams = dawui::automatableParams (*track);
+        auto* cur = dawui::laneParam (*track);
+        laneParamBox.clear (juce::dontSendNotification);
+        for (int i = 0; i < laneParams.size(); ++i)
+            laneParamBox.addItem (dawui::paramDisplayName (*laneParams[i]) + (laneParams[i]->hasAutomationPoints() ? "  *" : ""), i + 1);
+        laneParamBox.setSelectedId (laneParams.indexOf (cur) + 1, juce::dontSendNotification);
+    }
     int dragStartY = 0; bool resizing = false;
 };
 
@@ -254,9 +294,12 @@ public:
         y = -vs.scrollY;
         for (auto* t : vs.session.getTracks())
         {
-            const int h = owner.trackHeight (*t);
+            const int h = owner.trackHeight (*t), ch = owner.clipHeight (*t);
             if (y + h >= 0 && y < getHeight())
-                for (auto* c : t->getClips()) drawClip (g, *c, y, h);
+            {
+                for (auto* c : t->getClips()) drawClip (g, *c, y, ch);
+                if (h > ch) drawLane (g, *t, y + ch, h - ch);
+            }
             y += h;
         }
         // recording preview
@@ -347,6 +390,128 @@ public:
         return *it->second;
     }
 
+    // ---------------------------------------------------------------- automation lane
+    float laneValueToY (te::AutomatableParameter& p, float v, int top, int h) const
+    {
+        const auto r = p.getValueRange();
+        const float n = r.getLength() > 0 ? (v - r.getStart()) / r.getLength() : 0.5f;
+        return (float) top + 5.0f + (1.0f - juce::jlimit (0.0f, 1.0f, n)) * (float) (h - 10);
+    }
+    float laneYToValue (te::AutomatableParameter& p, float y, int top, int h) const
+    {
+        const auto r = p.getValueRange();
+        const float n = 1.0f - juce::jlimit (0.0f, 1.0f, (y - (float) top - 5.0f) / (float) (h - 10));
+        return r.getStart() + n * r.getLength();
+    }
+    void drawLane (juce::Graphics& g, te::AudioTrack& t, int top, int h)
+    {
+        g.setColour (juce::Colour (0xff131515)); g.fillRect (0, top, getWidth(), h - 1);
+        g.setColour (juce::Colour (0xff262a2a)); g.drawHorizontalLine (top, 0, (float) getWidth());
+        auto* p = dawui::laneParam (t);
+        if (p == nullptr) return;
+        auto& curve = p->getCurve();
+        const auto col = DawSession::trackColour (t);
+        const int n = curve.getNumPoints();
+        juce::Path path;
+        for (int x = 0; x <= getWidth(); x += 3)
+        {
+            const auto tm = vs.beatsToTime (vs.xToBeat ((float) x, 0));
+            const float v = n > 0 ? curve.getValueAt (tm, p->getCurrentValue()) : p->getCurrentValue();
+            const float y = laneValueToY (*p, v, top, h);
+            if (x == 0) path.startNewSubPath ((float) x, y); else path.lineTo ((float) x, y);
+        }
+        if (n == 0)
+        {
+            juce::Path dashed; const float dl[] { 4.0f, 4.0f };
+            juce::PathStrokeType (1.0f).createDashedStroke (dashed, path, dl, 2);
+            g.setColour (col.withAlpha (0.45f)); g.fillPath (dashed);
+            g.setColour (VegaColours::textDim); g.setFont (VegaFonts::ui (10.0f));
+            g.drawText ("Click to add automation points for " + dawui::paramDisplayName (*p) + "  (enable WRITE in the transport to record moves)", 10, top + 4, getWidth() - 20, 14, juce::Justification::centredLeft);
+            return;
+        }
+        auto fill = path; fill.lineTo ((float) getWidth(), (float) top + h - 1); fill.lineTo (0, (float) top + h - 1); fill.closeSubPath();
+        g.setColour (col.withAlpha (0.10f)); g.fillPath (fill);
+        g.setColour (col.withAlpha (0.9f)); g.strokePath (path, juce::PathStrokeType (1.6f));
+        for (int i = 0; i < n; ++i)
+        {
+            const float x = vs.beatToX (vs.timeToBeats (curve.getPointTime (i)), 0), y = laneValueToY (*p, curve.getPointValue (i), top, h);
+            if (x < -6 || x > getWidth() + 6) continue;
+            const bool hot = autoTrack == &t && autoPoint == i;
+            g.setColour (hot ? juce::Colours::white : col); g.fillEllipse (x - 4, y - 4, 8, 8);
+            g.setColour (juce::Colours::black.withAlpha (0.6f)); g.drawEllipse (x - 4, y - 4, 8, 8, 1.0f);
+        }
+        if (autoTrack == &t && autoPoint >= 0 && autoPoint < n)
+        {
+            g.setColour (juce::Colours::white); g.setFont (VegaFonts::ui (10.0f, true));
+            const float x = vs.beatToX (vs.timeToBeats (curve.getPointTime (autoPoint)), 0);
+            g.drawText (p->valueToString (curve.getPointValue (autoPoint)), (int) x + 8, top + 3, 90, 13, juce::Justification::centredLeft);
+        }
+    }
+    struct LaneHit { te::AudioTrack* track = nullptr; te::AutomatableParameter* param = nullptr; int top = 0, h = 0, point = -1; };
+    LaneHit laneHit (juce::Point<float> p)
+    {
+        int rowTop = 0;
+        auto* t = owner.trackAtY ((int) p.y, &rowTop);
+        if (t == nullptr) return {};
+        const int ch = owner.clipHeight (*t), lh = owner.laneHeight (*t);
+        if (lh == 0 || p.y < rowTop + ch) return {};
+        LaneHit r { t, dawui::laneParam (*t), rowTop + ch, lh, -1 };
+        if (r.param == nullptr) return {};
+        auto& curve = r.param->getCurve();
+        for (int i = 0; i < curve.getNumPoints(); ++i)
+        {
+            const float x = vs.beatToX (vs.timeToBeats (curve.getPointTime (i)), 0), y = laneValueToY (*r.param, curve.getPointValue (i), r.top, r.h);
+            if (std::abs (x - p.x) <= 6 && std::abs (y - p.y) <= 6) { r.point = i; break; }
+        }
+        return r;
+    }
+    bool laneMouseDown (const juce::MouseEvent& e)
+    {
+        auto h = laneHit (e.position);
+        if (h.track == nullptr) return false;
+        vs.selectTrack (h.track);
+        auto& curve = h.param->getCurve();
+        auto* um = &vs.edit().getUndoManager();
+        if (e.mods.isPopupMenu())
+        {
+            juce::PopupMenu m;
+            if (h.point >= 0) m.addItem (1, "Delete point");
+            m.addItem (2, "Clear all automation for " + dawui::paramDisplayName (*h.param), curve.getNumPoints() > 0);
+            m.addItem (3, "Hide lane");
+            te::AudioTrack::Ptr tp (h.track);
+            m.showMenuAsync ({}, [this, tp, pt = h.point, param = te::AutomatableParameter::Ptr (h.param)] (int r)
+            {
+                auto* um2 = &vs.edit().getUndoManager();
+                if (r == 1 && pt >= 0) param->getCurve().removePoint (pt, um2);
+                else if (r == 2) param->getCurve().clear (um2);
+                else if (r == 3) { tp->state.setProperty ("vegaAutoShown", false, nullptr); owner.resized(); }
+                owner.repaint();
+            });
+            return true;
+        }
+        um->beginNewTransaction ("Automation");
+        autoTrack = h.track; autoParam = h.param;
+        if (h.point >= 0) autoPoint = h.point;
+        else
+        {
+            const auto tm = vs.beatsToTime (std::max (0.0, vs.snapBeat (vs.xToBeat (e.position.x, 0), e.mods.isShiftDown())));
+            autoPoint = curve.addPoint (tm, laneYToValue (*h.param, e.position.y, h.top, h.h), 0.0f, um);
+        }
+        autoTop = h.top; autoH = h.h;
+        repaint();
+        return true;
+    }
+    void laneMouseDrag (const juce::MouseEvent& e)
+    {
+        if (autoParam == nullptr || autoPoint < 0) return;
+        auto& curve = autoParam->getCurve();
+        if (autoPoint >= curve.getNumPoints()) return;
+        const auto tm = vs.beatsToTime (std::max (0.0, vs.snapBeat (vs.xToBeat (e.position.x, 0), e.mods.isShiftDown())));
+        autoPoint = curve.movePoint (*autoParam, autoPoint, tm, laneYToValue (*autoParam, e.position.y, autoTop, autoH), false, &vs.edit().getUndoManager());
+        repaint();
+    }
+    te::AudioTrack* autoTrack = nullptr; te::AutomatableParameter::Ptr autoParam; int autoPoint = -1, autoTop = 0, autoH = 0;
+
     // ---------------------------------------------------------------- mouse
     enum class Drag { none, move, trimStart, trimEnd, fadeIn, fadeOut };
     struct Hit { te::Clip* clip = nullptr; Drag zone = Drag::none; };
@@ -356,6 +521,7 @@ public:
         auto* t = owner.trackAtY ((int) p.y, &rowTop);
         if (t == nullptr) return {};
         const int h = owner.trackHeight (*t);
+        if (p.y >= rowTop + owner.clipHeight (*t)) return {};     // automation lane
         for (auto* c : t->getClips())
         {
             const auto pos = c->getPosition();
@@ -382,6 +548,8 @@ public:
     void mouseDown (const juce::MouseEvent& e) override
     {
         owner.grabKeyboardFocus();
+        autoParam = nullptr; autoPoint = -1;
+        if (laneMouseDown (e)) return;
         const auto h = hitTest (e.position);
         drag = h.zone; dragged = false;
         if (h.clip != nullptr)
@@ -408,6 +576,7 @@ public:
     }
     void mouseDrag (const juce::MouseEvent& e) override
     {
+        if (autoParam != nullptr) { laneMouseDrag (e); return; }
         auto* c = vs.getSelectedClip();
         if (c == nullptr || drag == Drag::none) return;
         if (! dragged && e.getDistanceFromDragStart() < 3) return;
@@ -466,9 +635,15 @@ public:
         }
         owner.repaint();
     }
-    void mouseUp (const juce::MouseEvent&) override { drag = Drag::none; }
+    void mouseUp (const juce::MouseEvent&) override { drag = Drag::none; autoParam = nullptr; repaint(); }
     void mouseDoubleClick (const juce::MouseEvent& e) override
     {
+        if (auto lh = laneHit (e.position); lh.track != nullptr)
+        {   // double-click a point to delete it
+            if (lh.point >= 0) lh.param->getCurve().removePoint (lh.point, &vs.edit().getUndoManager());
+            autoParam = nullptr; autoPoint = -1; repaint();
+            return;
+        }
         const auto h = hitTest (e.position);
         if (h.clip != nullptr)
         {

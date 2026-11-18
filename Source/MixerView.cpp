@@ -182,6 +182,16 @@ public:
         fader.setRange (-60.0, 6.0, 0.1); fader.setSkewFactorFromMidPoint (-10.0);
         fader.setTextValueSuffix (" dB"); fader.setDoubleClickReturnValue (true, 0.0);
         fader.onValueChange = [this] { if (auto vp = volume()) vp->setVolumeDb ((float) fader.getValue()); touch ("Volume", juce::String (fader.getValue(), 1) + " dB"); };
+        // gestures let automation WRITE mode record these moves
+        fader.onDragStart = [this] { if (auto vp = volume()) dawui::gesture (vp->volParam.get(), true); };
+        fader.onDragEnd   = [this] { if (auto vp = volume()) dawui::gesture (vp->volParam.get(), false); };
+        pan.onDragStart = [this] { if (auto vp = volume()) dawui::gesture (vp->panParam.get(), true); };
+        pan.onDragEnd   = [this] { if (auto vp = volume()) dawui::gesture (vp->panParam.get(), false); };
+        for (int i = 0; i < 4; ++i)
+        {
+            knobs[i].onDragStart = [this, i] { if (auto* d = dj()) dawui::gesture (i < 3 ? d->band[i].get() : d->filter.get(), true); };
+            knobs[i].onDragEnd   = [this, i] { if (auto* d = dj()) dawui::gesture (i < 3 ? d->band[i].get() : d->filter.get(), false); };
+        }
         pan.onValueChange = [this] { if (auto vp = volume()) vp->setPan ((float) pan.getValue()); touch ("Pan", pan.getTextFromValue (pan.getValue())); };
         // HI / MID / LOW isolator knobs: 12 o'clock = 0 dB, fully left = kill
         static const char* bandName[] { "Hi", "Mid", "Low" };

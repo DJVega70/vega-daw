@@ -39,7 +39,10 @@ private:
     bool needsRebuild = false, needsRepaint = false;
     friend class Lanes; friend class Ruler;
 public:
-    int trackHeight (te::Track& t) const { return (int) t.state.getProperty ("vegaHeight", 84); }
+    static constexpr int autoLaneH = 76;
+    int clipHeight (te::Track& t) const { return (int) t.state.getProperty ("vegaHeight", 84); }
+    int laneHeight (te::Track& t) const { return (bool) t.state.getProperty ("vegaAutoShown", false) ? autoLaneH : 0; }
+    int trackHeight (te::Track& t) const { return clipHeight (t) + laneHeight (t); }   // clips + automation lane
     int totalTracksHeight();
     te::AudioTrack* trackAtY (int yInLanes, int* rowTop = nullptr);
     int trackTop (te::AudioTrack&);

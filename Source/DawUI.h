@@ -80,6 +80,36 @@ inline void choosePlugin (te::Engine& engine, bool instruments, juce::Component*
     });
 }
 
+/** Automation: parameters a lane can show, and the one currently chosen for a track's lane */
+inline juce::String paramKey (te::AutomatableParameter& p) { return (p.getPlugin() != nullptr ? p.getPlugin()->itemID.toString() : juce::String()) + "|" + p.paramID; }
+inline juce::Array<te::AutomatableParameter*> automatableParams (te::AudioTrack& t)
+{
+    juce::Array<te::AutomatableParameter*> r;
+    for (auto* p : t.getAllAutomatableParams())
+    {
+        auto* pl = p->getPlugin();
+        if (pl == nullptr || dynamic_cast<te::LevelMeterPlugin*> (pl) || dynamic_cast<te::AuxReturnPlugin*> (pl)) continue;
+        r.add (p);
+    }
+    return r;
+}
+inline juce::String paramDisplayName (te::AutomatableParameter& p)
+{
+    auto* pl = p.getPlugin();
+    if (dynamic_cast<te::VolumeAndPanPlugin*> (pl)) return p.getParameterName();          // "Volume", "Pan"
+    return (pl != nullptr ? pl->getName() + ": " : juce::String()) + p.getParameterName();
+}
+inline te::AutomatableParameter* laneParam (te::AudioTrack& t)
+{
+    const auto key = t.state.getProperty ("vegaAutoParam").toString();
+    auto params = automatableParams (t);
+    for (auto* p : params) if (paramKey (*p) == key) return p;
+    if (auto vp = t.getVolumePlugin()) return vp->volParam.get();
+    return params.isEmpty() ? nullptr : params[0];
+}
+/** Wrap a UI edit so automation write mode can record it */
+inline void gesture (te::AutomatableParameter* p, bool begin) { if (p != nullptr) { if (begin) p->parameterChangeGestureBegin(); else p->parameterChangeGestureEnd(); } }
+
 /** Record arm: true when an input feeding this track is armed */
 inline bool isArmed (te::AudioTrack& t)
 {

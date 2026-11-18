@@ -1,6 +1,7 @@
 #include "../Source/DawSession.h"
 #include "../Source/HuiSurface.h"
 #include "../Source/StemSeparator.h"
+#include "../Source/DawUI.h"
 #include <iostream>
 static int fails = 0;
 static void check (bool ok, const juce::String& m) { std::cout << (ok ? "PASS " : "FAIL ") << m << "\n"; if (! ok) ++fails; }
@@ -343,6 +344,41 @@ int main()
         auto r = StemSeparator::separate (StemSeparator::Model::sixStems, juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("nope.wav"),
                                           juce::File::getSpecialLocation (juce::File::tempDirectory), fm, nullptr);
         check (! r.ok && r.error.isNotEmpty(), "separation reports a clear error when it can't run (" + r.error + ")");
+    }
+    {   // automation: a volume ramp written into the curve plays back in the render, and is saved
+        DawSession a (engine);
+        auto tone = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_auto_tone.wav");
+        {
+            tone.deleteFile(); juce::WavAudioFormat wav;
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (tone), 48000.0, 2, 24, {}, 0));
+            juce::AudioBuffer<float> b (2, 48000 * 4);
+            for (int i = 0; i < b.getNumSamples(); ++i) { const float v = 0.3f * (float) std::sin (2 * juce::MathConstants<double>::pi * 440 * i / 48000.0); b.setSample (0, i, v); b.setSample (1, i, v); }
+            w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+        }
+        auto* t = a.getTracks()[0];
+        a.insertAudioFile (*t, tone, te::TimePosition());
+        auto vp = t->getVolumePlugin();
+        auto& curve = vp->volParam->getCurve();
+        curve.addPoint (te::TimePosition::fromSeconds (0.5), te::decibelsToVolumeFaderPosition (0.0f), 0.0f, nullptr);
+        curve.addPoint (te::TimePosition::fromSeconds (2.5), te::decibelsToVolumeFaderPosition (-24.0f), 0.0f, nullptr);
+        check (dawui::laneParam (*t) == vp->volParam.get() && dawui::automatableParams (*t).size() >= 6, "automation lane lists the track's parameters (" + juce::String (dawui::automatableParams (*t).size()) + "), volume by default");
+        auto o = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_auto.wav");
+        a.exportWav (o, te::TimeRange (te::TimePosition(), te::TimePosition::fromSeconds (3.5)));
+        std::unique_ptr<juce::AudioFormatReader> r (engine.getAudioFileFormatManager().readFormatManager.createReaderFor (o));
+        float early = 0, late = 0;
+        if (r != nullptr)
+        {
+            juce::AudioBuffer<float> b (2, (int) r->lengthInSamples); r->read (&b, 0, b.getNumSamples(), 0, true, true);
+            early = b.getRMSLevel (0, (int) (0.1 * r->sampleRate), (int) (0.3 * r->sampleRate));
+            late = b.getRMSLevel (0, (int) (2.8 * r->sampleRate), (int) (0.4 * r->sampleRate));
+        }
+        const float drop = juce::Decibels::gainToDecibels (late) - juce::Decibels::gainToDecibels (early);
+        check (std::abs (drop + 24.0f) < 2.0f, "volume automation ramp plays back (" + juce::String (drop, 1) + " dB from start to end)");
+        auto pf = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_auto.vegaproj");
+        a.saveProjectAs (pf);
+        DawSession a2 (engine); a2.openProject (pf);
+        check (a2.getTracks()[0]->getVolumePlugin()->volParam->getCurve().getNumPoints() == 2, "automation points saved with the project");
+        o.deleteFile(); pf.deleteFile(); tone.deleteFile();
     }
     out.deleteFile(); proj.deleteFile();
     std::cout << (fails == 0 ? "ALL PASSED" : "FAILURES: " + std::to_string (fails)) << "\n";
