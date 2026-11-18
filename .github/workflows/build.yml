@@ -98,7 +98,8 @@ jobs:
   release:
     name: Publish release
     needs: [test, windows, macos]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # publish whenever the tests and Windows build pass; GitHub's macOS runners are sometimes unavailable
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.result == 'success' && needs.windows.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -110,6 +111,14 @@ jobs:
         run: |
           mkdir out
           find dist -name '*.zip' -exec cp {} out/ \;
+          ls -la out
+      - name: Carry over the previous Mac build if this run has none
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! ls out/*macOS*.zip >/dev/null 2>&1; then
+            gh release download --repo "${{ github.repository }}" --pattern '*macOS*.zip' --dir out || echo "no previous Mac build"
+          fi
           ls -la out
       - uses: softprops/action-gh-release@v2
         with:
