@@ -875,6 +875,15 @@ public:
             if (bar && (vs.pixelsPerBeat * num > 28 || ((int) b / num) % 4 == 0))
                 g.drawText (juce::String ((int) b / num + 1), (int) x + 3, 10, 40, 14, juce::Justification::left);
         }
+        // markers
+        for (auto& m : vs.edit().getMarkerManager().getMarkers())
+        {
+            const float mx = vs.beatToX (vs.timeToBeats (m->getPosition().getStart()), 0);
+            if (mx < -40 || mx > getWidth()) continue;
+            juce::Path flag; flag.addTriangle (mx, 10, mx + 9, 14, mx, 18);
+            g.setColour (juce::Colour (0xfff2867c)); g.fillPath (flag); g.fillRect (mx, 10.0f, 1.2f, (float) getHeight() - 10);
+            g.setFont (VegaFonts::ui (9.0f, true)); g.drawText (juce::String (m->getMarkerID()), (int) mx + 10, 9, 24, 10, juce::Justification::left);
+        }
         const float px = vs.beatToX (vs.timeToBeats (tr.getPosition()), 0);
         juce::Path tri; tri.addTriangle (px - 6, 18, px + 6, 18, px, (float) getHeight());
         g.setColour (VegaColours::gold); g.fillPath (tri);

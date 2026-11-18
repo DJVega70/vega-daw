@@ -24,6 +24,7 @@ public:
     bool showEdit = true;        // Mode: show / hide the instrument + inserts section
     void touched (const juce::String& title, const juce::String& value);
     void pageBy (int dir);
+    void scrollStrips (int n);
     void selectNeighbour (int dir);
     void layoutChanged() { resized(); }
 private:

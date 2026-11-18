@@ -570,54 +570,240 @@ private:
 };
 
 //==============================================================================
-/** Left-hand control column: display, Page, Track, Record / Play, Shift / Mode, pad-row labels */
+namespace tp
+{
+/** Light-grey console key; lit (salmon / cyan / green) when its function is on */
+class Key : public juce::Button
+{
+public:
+    enum Shape { square, pill, navUp, navDown, navLeft, navRight };
+    explicit Key (Shape sh = square, juce::Colour litColour = juce::Colour (0xfff2867c)) : juce::Button ({}), shape (sh), lit (litColour) {}
+    Shape shape; juce::Colour lit;
+    void paintButton (juce::Graphics& g, bool over, bool down) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (1.5f);
+        const float rad = shape == pill ? r.getHeight() * 0.45f : 4.0f;
+        g.setColour (juce::Colours::black.withAlpha (0.6f)); g.fillRoundedRectangle (r.translated (0, 2.0f), rad);
+        const bool on = getToggleState();
+        auto top = on ? lit.brighter (0.25f) : juce::Colour (down ? 0xffa4a9b2 : over ? 0xffc9ced6 : 0xffbcc1c9);
+        auto bot = on ? lit.darker (0.15f) : juce::Colour (0xff8d929b);
+        if (on) { g.setColour (lit.withAlpha (0.3f)); g.fillRoundedRectangle (r.expanded (3.0f), rad + 3.0f); }
+        g.setGradientFill (juce::ColourGradient (top, 0, r.getY(), bot, 0, r.getBottom(), false));
+        g.fillRoundedRectangle (r, rad);
+        g.setColour (juce::Colours::white.withAlpha (0.35f)); g.drawHorizontalLine ((int) r.getY() + 1, r.getX() + rad, r.getRight() - rad);
+        g.setColour (juce::Colours::black.withAlpha (0.45f)); g.drawRoundedRectangle (r, rad, 1.0f);
+    }
+};
+
+/** Dark transport key with an icon */
+class BigKey : public juce::Button
+{
+public:
+    enum Icon { rew, ffwd, stop, play, rec };
+    explicit BigKey (Icon i) : juce::Button ({}), icon (i) {}
+    Icon icon;
+    void paintButton (juce::Graphics& g, bool over, bool down) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (1.5f);
+        g.setColour (juce::Colours::black.withAlpha (0.7f)); g.fillRoundedRectangle (r.translated (0, 2.0f), 5.0f);
+        g.setColour (juce::Colour (0xff0f1012)); g.fillRoundedRectangle (r, 5.0f);
+        auto face = r.reduced (3.0f);
+        g.setGradientFill (juce::ColourGradient (juce::Colour (down ? 0xff26282c : over ? 0xff3a3d42 : 0xff33363b), 0, face.getY(), juce::Colour (0xff222428), 0, face.getBottom(), false));
+        g.fillRoundedRectangle (face, 3.0f);
+        const auto c = face.getCentre(); const float s = face.getHeight() * 0.22f;
+        const bool on = getToggleState();
+        juce::Colour ink = juce::Colour (0xff5d6168);
+        if (on) ink = icon == rec ? juce::Colour (0xffff3a4a) : icon == play ? juce::Colour (0xff32e070) : juce::Colour (0xffd8dce2);
+        juce::Path p;
+        auto tri = [&] (float cx, bool right) { if (right) p.addTriangle (cx - s, c.y - s, cx - s, c.y + s, cx + s * 0.9f, c.y); else p.addTriangle (cx + s, c.y - s, cx + s, c.y + s, cx - s * 0.9f, c.y); };
+        switch (icon)
+        {
+            case rew:  tri (c.x - s * 0.9f, false); tri (c.x + s * 0.9f, false); break;
+            case ffwd: tri (c.x - s * 0.9f, true);  tri (c.x + s * 0.9f, true);  break;
+            case stop: p.addRectangle (c.x - s * 0.85f, c.y - s * 0.85f, s * 1.7f, s * 1.7f); break;
+            case play: tri (c.x + s * 0.1f, true); break;
+            case rec:  p.addEllipse (c.x - s * 0.95f, c.y - s * 0.95f, s * 1.9f, s * 1.9f); break;
+        }
+        if (on) { g.setColour (ink.withAlpha (0.35f)); g.strokePath (p, juce::PathStrokeType (5.0f)); }
+        g.setColour (ink); g.fillPath (p);
+    }
+};
+
+/** Jog wheel: drag around (or up / down) to move the playhead, or scrub when SCRUB is lit */
+class Jog : public juce::Component
+{
+public:
+    std::function<void (double turns)> onTurn;
+    std::function<void (bool)> onTouch;
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (4.0f);
+        const auto c = r.getCentre(); const float rad = std::min (r.getWidth(), r.getHeight()) * 0.5f;
+        g.setColour (juce::Colours::black.withAlpha (0.6f)); g.fillEllipse (juce::Rectangle<float> (rad * 2 + 6, rad * 2 + 6).withCentre (c.translated (0, 3)));
+        g.setGradientFill (juce::ColourGradient (juce::Colours::white, c.x, c.y - rad, juce::Colour (0xff8a8e94), c.x, c.y + rad, false));
+        g.fillEllipse (juce::Rectangle<float> (rad * 2, rad * 2).withCentre (c));                   // bright outer ring
+        g.setColour (juce::Colour (0xff0d0e10)); g.fillEllipse (juce::Rectangle<float> (rad * 1.86f, rad * 1.86f).withCentre (c));
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff2c2e33), c.x - rad * 0.5f, c.y - rad * 0.6f, juce::Colour (0xff141518), c.x + rad * 0.5f, c.y + rad * 0.7f, true));
+        g.fillEllipse (juce::Rectangle<float> (rad * 1.76f, rad * 1.76f).withCentre (c));
+        // finger dimple
+        const juce::Point<float> d (c.x + std::sin (angle) * rad * 0.52f, c.y - std::cos (angle) * rad * 0.52f);
+        const float dr = rad * 0.24f;
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff3a3d42), d.x, d.y - dr, juce::Colour (0xff0c0d0f), d.x, d.y + dr, false));
+        g.fillEllipse (juce::Rectangle<float> (dr * 2, dr * 2).withCentre (d));
+        g.setColour (juce::Colours::white.withAlpha (0.08f)); g.drawEllipse (juce::Rectangle<float> (dr * 2, dr * 2).withCentre (d), 1.0f);
+    }
+    void mouseDown (const juce::MouseEvent& e) override { lastAngle = angleAt (e.position); lastY = e.position.y; if (onTouch) onTouch (true); }
+    void mouseUp (const juce::MouseEvent&) override { if (onTouch) onTouch (false); }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        const auto c = getLocalBounds().toFloat().getCentre();
+        double delta;
+        if (e.position.getDistanceFrom (c) > getWidth() * 0.12f)
+        {   // circular motion
+            const float a = angleAt (e.position);
+            float da = a - lastAngle;
+            if (da > juce::MathConstants<float>::pi) da -= juce::MathConstants<float>::twoPi;
+            if (da < -juce::MathConstants<float>::pi) da += juce::MathConstants<float>::twoPi;
+            lastAngle = a; delta = da / juce::MathConstants<double>::twoPi;
+        }
+        else { delta = (lastY - e.position.y) / 300.0; lastAngle = angleAt (e.position); }
+        lastY = e.position.y;
+        angle += (float) (delta * juce::MathConstants<double>::twoPi);
+        if (onTurn) onTurn (delta);
+        repaint();
+    }
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& w) override
+    {
+        const double delta = w.deltaY * 0.15;
+        angle += (float) (delta * juce::MathConstants<double>::twoPi);
+        if (onTurn) onTurn (delta);
+        repaint();
+    }
+private:
+    float angleAt (juce::Point<float> p) const { const auto c = getLocalBounds().toFloat().getCentre(); return std::atan2 (p.x - c.x, c.y - p.y); }
+    float angle = 0, lastAngle = 0, lastY = 0;
+};
+} // namespace tp
+
+/** Left-hand column: display, TRANSPORT section (Marker / Nudge / Cycle / Drop / Replace / Click / Solo +
+    Rew / Ffwd / Stop / Play / Rec), FADER BANK and CHANNEL, navigation cluster with zoom, SCRUB + jog wheel,
+    pad-row labels. Styled after a console transport section. */
 class MixerView::ControlPanel : public juce::Component, private juce::Timer
 {
 public:
-    static constexpr int W = 178;
+    static constexpr int W = 238;
     ControlPanel (MixerView& o, ViewState& v) : owner (o), vs (v)
     {
-        for (auto* k : { &pageUp, &pageDown, &trackL, &trackR, &rec, &play, &shift, &mode }) addAndMakeVisible (k);
-        pageUp.onClick = [this] { owner.pageBy (-1); };   pageDown.onClick = [this] { owner.pageBy (1); };
-        trackL.onClick = [this] { owner.selectNeighbour (-1); }; trackR.onClick = [this] { owner.selectNeighbour (1); };
-        rec.onClick = [this] { auto& t = vs.edit().getTransport(); if (t.isRecording()) t.stop (true, false); else t.record (false); };
-        play.onClick = [this] { auto& t = vs.edit().getTransport(); if (t.isPlaying()) t.stop (false, false); else t.play (false); };
-        shift.setClickingTogglesState (true); shift.on = juce::Colour (0xffff5577);
-        shift.onClick = [this] { owner.shift = shift.getToggleState(); owner.touched ("Pads", owner.shift ? "Arm / Select" : "Solo / Mute"); repaint(); };
-        mode.setClickingTogglesState (true); mode.setToggleState (owner.showEdit, juce::dontSendNotification); mode.on = VegaColours::accent;
-        mode.onClick = [this] { owner.showEdit = mode.getToggleState(); owner.touched ("Mode", owner.showEdit ? "Edit: inserts shown" : "Mix: inserts hidden"); owner.layoutChanged(); };
-        pageUp.setTooltip ("Previous 8 channels"); pageDown.setTooltip ("Next 8 channels");
-        trackL.setTooltip ("Select previous track"); trackR.setTooltip ("Select next track");
-        shift.setTooltip ("Shift: pads become Record Arm (top) and Select (bottom)"); mode.setTooltip ("Show / hide each channel's instrument and insert section");
-        startTimerHz (10);
+        for (auto* k : { &marker, &nudge, &cycle, &drop, &replace, &click, &solo, &scrub, &bankL, &bankR, &chanL, &chanR, &up, &down, &left, &right, &zoom })
+            addAndMakeVisible (k);
+        for (auto* k : { &rew, &ffwd, &stop, &play, &rec }) addAndMakeVisible (k);
+        addAndMakeVisible (jog);
+        // EDIT (the old Mode key): show / hide each channel's instrument, inserts and sends
+        editKey.setTooltip ("Edit: show / hide each channel's instrument, inserts and sends");
+        editKey.onClick = [this] { owner.showEdit = ! owner.showEdit; owner.touched ("Edit", owner.showEdit ? "Inserts shown" : "Inserts hidden"); owner.layoutChanged(); };
+        addAndMakeVisible (editKey);
+
+        marker.setTooltip ("Marker: drop a marker at the playhead (or remove the one there). Shift + rewind / fast-forward jumps between markers");
+        marker.onClick = [this] { toggleMarker(); };
+        nudge.setClickingTogglesState (true); nudge.setTooltip ("Nudge: rewind / fast-forward move the selected clip by one grid step");
+        nudge.onClick = [this] { owner.touched ("Nudge", nudge.getToggleState() ? "On: << >> move the clip" : "Off"); };
+        cycle.setTooltip ("Cycle (loop) on / off");
+        cycle.onClick = [this] { auto& t = transport(); t.looping = ! t.looping.get(); if (t.looping && t.getLoopRange().getLength() <= 0s) t.setLoopRange ({ 0s, vs.session.barLength() * 4 }); owner.touched ("Cycle", t.looping ? "On" : "Off"); };
+        drop.setTooltip ("Drop (punch in / out): recording only happens inside the cycle range");
+        drop.onClick = [this] { auto& e = vs.edit(); e.recordingPunchInOut = ! e.recordingPunchInOut.get(); owner.touched ("Drop-in", e.recordingPunchInOut ? "Punch inside the cycle" : "Off"); };
+        replace.setClickingTogglesState (true); replace.setTooltip ("Replace: MIDI recording replaces the notes underneath instead of layering");
+        replace.onClick = [this] { for (auto& m : vs.edit().engine.getDeviceManager().getMidiInDevices()) m->replaceExistingClips = replace.getToggleState(); owner.touched ("MIDI record", replace.getToggleState() ? "Replace" : "Overdub"); };
+        click.setTooltip ("Metronome");
+        click.onClick = [this] { vs.edit().clickTrackEnabled = ! vs.edit().clickTrackEnabled.get(); owner.touched ("Click", vs.edit().clickTrackEnabled.get() ? "On" : "Off"); };
+        solo.setTooltip ("Solo the selected track");
+        solo.onClick = [this] { if (auto* t = vs.getSelectedTrack()) { t->setSolo (! t->isSolo (false)); owner.touched (t->getName(), t->isSolo (false) ? "Solo On" : "Solo Off"); } };
+
+        rew.onClick = [this] { if (! held) step (-1); held = false; };
+        ffwd.onClick = [this] { if (! held) step (1); held = false; };
+        stop.onClick = [this] { auto& t = transport(); if (t.isPlaying() || t.isRecording()) t.stop (false, false); else t.setPosition (0s); };
+        play.onClick = [this] { auto& t = transport(); if (t.isPlaying()) t.stop (false, false); else t.play (false); };
+        rec.onClick = [this] { auto& t = transport(); if (t.isRecording()) t.stop (true, false); else t.record (false); };
+        rew.setTooltip ("Rewind one bar (hold to keep going). Shift: previous marker"); ffwd.setTooltip ("Forward one bar (hold to keep going). Shift: next marker");
+        stop.setTooltip ("Stop (press again to return to zero)");
+
+        bankL.onClick = [this] { owner.pageBy (-1); }; bankR.onClick = [this] { owner.pageBy (1); };
+        chanL.onClick = [this] { owner.scrollStrips (-1); }; chanR.onClick = [this] { owner.scrollStrips (1); };
+        bankL.setTooltip ("Previous 8 channels"); bankR.setTooltip ("Next 8 channels"); chanL.setTooltip ("Shift the channels by one"); chanR.setTooltip ("Shift the channels by one");
+        up.onClick = [this] { if (zoom.getToggleState()) vZoom (1); else owner.selectNeighbour (-1); };
+        down.onClick = [this] { if (zoom.getToggleState()) vZoom (-1); else owner.selectNeighbour (1); };
+        left.onClick = [this] { if (zoom.getToggleState()) hZoom (-1); else moveBars (-1); };
+        right.onClick = [this] { if (zoom.getToggleState()) hZoom (1); else moveBars (1); };
+        zoom.setClickingTogglesState (true);
+        zoom.onClick = [this] { owner.touched ("Zoom", zoom.getToggleState() ? "Arrows zoom" : "Arrows navigate"); };
+        zoom.setTooltip ("Zoom: the arrows zoom the arrange window instead of moving");
+        up.setTooltip ("Select the previous track"); down.setTooltip ("Select the next track"); left.setTooltip ("Playhead back one bar"); right.setTooltip ("Playhead forward one bar");
+        scrub.setClickingTogglesState (true); scrub.setTooltip ("Scrub: the jog wheel plays the audio as you turn it");
+        scrub.onClick = [this] { owner.touched ("Jog wheel", scrub.getToggleState() ? "Scrub" : "Move playhead"); };
+        jog.onTurn = [this] (double turns) { jogTurn (turns); };
+        jog.onTouch = [this] (bool down) { if (scrub.getToggleState()) transport().setUserDragging (down); };
+        startTimerHz (20);
     }
     void show (const juce::String& a, const juce::String& b) { line1 = a; line2 = b; repaint (oled); }
+
     void paint (juce::Graphics& g) override
     {
         // logo
         g.setColour (juce::Colour (0xffe6e6e6));
-        g.setFont (VegaFonts::ui (17.0f, true)); g.drawText ("VEGA", 16, 14, 60, 22, juce::Justification::left);
-        g.setFont (VegaFonts::ui (17.0f, false)); g.drawText ("MIXER", 66, 14, 70, 22, juce::Justification::left);
-        g.setFont (VegaFonts::ui (9.0f, true)); g.drawText ("XL", 124, 12, 20, 12, juce::Justification::left);
+        g.setFont (VegaFonts::ui (17.0f, true)); g.drawText ("VEGA", 16, 12, 60, 22, juce::Justification::left);
+        g.setFont (VegaFonts::ui (17.0f, false)); g.drawText ("MIXER", 66, 12, 70, 22, juce::Justification::left);
+        g.setFont (VegaFonts::ui (9.0f, true)); g.drawText ("XL", 124, 10, 20, 12, juce::Justification::left);
         // display
         g.setColour (juce::Colours::black); g.fillRoundedRectangle (oled.toFloat().expanded (4.0f), 5.0f);
         g.setColour (juce::Colour (0xff333336)); g.drawRoundedRectangle (oled.toFloat().expanded (4.0f), 5.0f, 1.0f);
         g.setColour (juce::Colour (0xff0b0b0d)); g.fillRect (oled);
         g.setColour (juce::Colours::white.withAlpha (0.82f)); g.setFont (VegaFonts::mono (12.0f));
-        g.drawFittedText (line1, oled.withHeight (oled.getHeight() / 2).withTrimmedTop (6), juce::Justification::centred, 1);
+        g.drawFittedText (line1, oled.withHeight (oled.getHeight() / 2).withTrimmedTop (5), juce::Justification::centred, 1);
         g.setColour (juce::Colours::white); g.setFont (VegaFonts::mono (15.5f));
-        g.drawFittedText (line2, oled.withTrimmedTop (oled.getHeight() / 2 - 2).withTrimmedBottom (6), juce::Justification::centred, 1);
-        // key boxes + captions
-        for (auto* b : { &pageBox, &trackBox, &transportBox, &shiftBox }) if (! b->isEmpty()) xl::drawKeyBox (g, b->toFloat());
-        g.setFont (VegaFonts::ui (12.0f)); g.setColour (juce::Colour (0xffdcdcdc));
-        g.drawText ("Page", pageBox.withY (pageBox.getY() - 22).withHeight (18), juce::Justification::centred);
-        g.drawText ("Track", trackBox.withY (trackBox.getY() - 22).withHeight (18), juce::Justification::centred);
-        if (! shiftBox.isEmpty()) g.drawText ("Edit", shiftBox.withY (shiftBox.getBottom() + 4).withHeight (18), juce::Justification::centred);
-        g.setColour (juce::Colour (0xff111113));
-        g.fillRect (pageBox.getCentreX() - 1, pageBox.getY() + 8, 2, pageBox.getHeight() - 16);
-        g.fillRect (trackBox.getCentreX() - 1, trackBox.getY() + 8, 2, trackBox.getHeight() - 16);
-        if (! transportBox.isEmpty()) g.fillRect (transportBox.getX() + 10, transportBox.getCentreY() - 1, transportBox.getWidth() - 20, 2);
-        if (! shiftBox.isEmpty()) g.fillRect (shiftBox.getX() + 10, shiftBox.getCentreY() - 1, shiftBox.getWidth() - 20, 2);
+        g.drawFittedText (line2, oled.withTrimmedTop (oled.getHeight() / 2 - 2).withTrimmedBottom (5), juce::Justification::centred, 1);
+
+        auto section = [&g] (juce::Rectangle<int> r, juce::Colour fill)
+        {
+            if (r.isEmpty()) return;
+            g.setColour (fill); g.fillRoundedRectangle (r.toFloat(), 7.0f);
+            g.setColour (juce::Colour (0xff3a3c40)); g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 7.0f, 1.0f);
+        };
+        auto caption = [&g] (const juce::String& t, juce::Rectangle<int> under, float size = 8.6f)
+        {
+            g.setFont (VegaFonts::ui (size, true)); g.setColour (juce::Colour (0xffe8e8ea));
+            g.drawText (t, under.getCentreX() - 34, under.getBottom() + 2, 68, 12, juce::Justification::centred);
+        };
+        // TRANSPORT
+        section (transportBox, juce::Colour (0xff141517));
+        g.setFont (VegaFonts::ui (11.0f, true)); g.setColour (juce::Colour (0xffe8e8ea));
+        g.drawText ("TRANSPORT", transportBox.withHeight (18).translated (0, 3), juce::Justification::centred);
+        caption ("MARKER", marker.getBounds()); caption ("NUDGE", nudge.getBounds()); caption ("CYCLE", cycle.getBounds()); caption ("DROP", drop.getBounds());
+        caption ("REPLACE", replace.getBounds()); caption ("CLICK", click.getBounds()); caption ("SOLO", solo.getBounds()); caption ("EDIT", editKey.getBounds());
+        // FADER BANK / CHANNEL
+        section (bankBox, juce::Colour (0xff1e1f22));
+        if (! bankBox.isEmpty())
+        {
+            g.setFont (VegaFonts::ui (10.0f, true)); g.setColour (juce::Colour (0xffe8e8ea));
+            g.drawText ("FADER BANK", bankBox.withHeight (16).translated (0, 3), juce::Justification::centred);
+            g.drawText ("CHANNEL", juce::Rectangle<int> (bankBox.getX(), chanL.getY() - 16, bankBox.getWidth(), 14), juce::Justification::centred);
+            for (auto* k : { &bankL, &chanL }) { juce::Path t; const float y = k->getBounds().toFloat().getCentreY(), x = (float) k->getX() - 9; t.addTriangle (x, y, x + 6, y - 5, x + 6, y + 5); g.setColour (juce::Colour (0xffd0d0d4)); g.fillPath (t); }
+            for (auto* k : { &bankR, &chanR }) { juce::Path t; const float y = k->getBounds().toFloat().getCentreY(), x = (float) k->getRight() + 9; t.addTriangle (x, y, x - 6, y - 5, x - 6, y + 5); g.setColour (juce::Colour (0xffd0d0d4)); g.fillPath (t); }
+        }
+        // navigation cluster ring + direction marks
+        if (up.isVisible())
+        {
+            const auto c = zoom.getBounds().toFloat().getCentre(); const float rr = (float) (right.getRight() - left.getX()) * 0.47f;
+            g.setColour (juce::Colour (0xffcfd0d4).withAlpha (0.8f)); g.drawEllipse (juce::Rectangle<float> (rr * 2, rr * 2).withCentre (c), 1.4f);
+            auto mark = [&g] (float x, float y, float dx, float dy)
+            {
+                juce::Path t; t.addTriangle (x + dx * 6, y + dy * 6, x - dy * 5, y + dx * 5, x + dy * 5, y - dx * 5);
+                g.setColour (juce::Colour (0xffd0d0d4)); g.fillPath (t);
+            };
+            mark (c.x, (float) up.getY() - 9, 0, -1); mark (c.x, (float) down.getBottom() + 9, 0, 1);
+            mark ((float) left.getX() - 9, c.y, -1, 0); mark ((float) right.getRight() + 9, c.y, 1, 0);
+            g.setColour (juce::Colour (0xffd0d0d4)); g.drawEllipse ((float) zoom.getRight() + 4, (float) zoom.getY() - 16, 11, 11, 1.2f);
+            g.drawText ("+", zoom.getRight() + 4, zoom.getY() - 16, 11, 11, juce::Justification::centred);
+        }
+        if (scrub.isVisible()) caption ("SCRUB", scrub.getBounds());
         // pad row labels, aligned with the strips' pad rows
         const int h = getHeight();
         for (int row = 0; row < 2; ++row)
@@ -634,38 +820,153 @@ public:
             g.setFont (VegaFonts::ui (12.5f, owner.shift)); g.setColour (owner.shift ? juce::Colours::white : VegaColours::textDim);
             g.drawText (b, t, juce::Justification::centredLeft);
         }
+        shiftArea = { 8, mixlayout::padY (h, 0) - 30, W - 16, 22 };
+        g.setFont (VegaFonts::ui (10.0f, true)); g.setColour (owner.shift ? juce::Colour (0xffff7a8a) : VegaColours::textDim);
+        g.drawText (owner.shift ? "SHIFT ON: pads = Arm / Select   (click)" : "click here for Shift (Arm / Select)", shiftArea, juce::Justification::centred);
+    }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (shiftArea.contains (e.getPosition()))
+        {
+            owner.shift = ! owner.shift;
+            owner.touched ("Pads", owner.shift ? "Arm / Select" : "Solo / Mute");
+            repaint();
+        }
     }
     void resized() override
     {
-        oled = { 22, 52, W - 44, 64 };
-        pageBox = { 26, 156, W - 52, 46 };
-        trackBox = { 26, 232, W - 52, 46 };
-        transportBox = { 26, 300, W - 52, 92 };
-        shiftBox = { 26, 408, W - 52, 92 };
-        pageUp.setBounds (pageBox.withWidth (pageBox.getWidth() / 2)); pageDown.setBounds (pageBox.withTrimmedLeft (pageBox.getWidth() / 2));
-        trackL.setBounds (trackBox.withWidth (trackBox.getWidth() / 2)); trackR.setBounds (trackBox.withTrimmedLeft (trackBox.getWidth() / 2));
-        rec.setBounds (transportBox.withHeight (transportBox.getHeight() / 2)); play.setBounds (transportBox.withTrimmedTop (transportBox.getHeight() / 2));
-        shift.setBounds (shiftBox.withHeight (shiftBox.getHeight() / 2)); mode.setBounds (shiftBox.withTrimmedTop (shiftBox.getHeight() / 2));
-        // hide the lower keys if the window is short so they never overlap the pad labels
-        const int limit = mixlayout::padY (getHeight(), 0) - 26;
-        const bool fitsShift = shiftBox.getBottom() + 22 < limit, fitsTransport = transportBox.getBottom() < limit;
-        shift.setVisible (fitsShift); mode.setVisible (fitsShift); rec.setVisible (fitsTransport); play.setVisible (fitsTransport);
-        if (! fitsShift) shiftBox = {};
-        if (! fitsTransport) transportBox = {};
+        const int limit = mixlayout::padY (getHeight(), 0) - 34;    // keep clear of the pad labels / shift line
+        oled = { 18, 44, W - 36, 58 };
+        transportBox = { 6, 116, W - 12, 158 };
+        // small keys: 4 + 3
+        const int ks = 26;
+        const int row1[] { 0, 1, 2, 3 };
+        juce::Button* r1[] { &marker, &nudge, &cycle, &drop };
+        for (int i : row1) r1[i]->setBounds (transportBox.getX() + 18 + i * 54, transportBox.getY() + 24, ks, ks);
+        juce::Button* r2[] { &replace, &click, &solo, &editKey };
+        for (int i = 0; i < 4; ++i) r2[i]->setBounds (transportBox.getX() + 18 + i * 54, transportBox.getY() + 66, ks, ks);
+        juce::Button* big[] { &rew, &ffwd, &stop, &play, &rec };
+        const int bw = (transportBox.getWidth() - 16) / 5;
+        for (int i = 0; i < 5; ++i) big[i]->setBounds (transportBox.getX() + 8 + i * bw, transportBox.getY() + 112, bw - 4, 36);
+
+        bankBox = { 6, 284, W - 12, 108 };
+        const bool fitsBank = bankBox.getBottom() < limit;
+        for (auto* k : { &bankL, &bankR, &chanL, &chanR }) k->setVisible (fitsBank);
+        if (fitsBank)
+        {
+            bankL.setBounds (bankBox.getCentreX() - 58, bankBox.getY() + 22, 50, 30); bankR.setBounds (bankBox.getCentreX() + 8, bankBox.getY() + 22, 50, 30);
+            chanL.setBounds (bankBox.getCentreX() - 58, bankBox.getY() + 72, 50, 30); chanR.setBounds (bankBox.getCentreX() + 8, bankBox.getY() + 72, 50, 30);
+        }
+        else bankBox = {};
+
+        // navigation cluster (left) + scrub / jog (right)
+        const int navTop = 404, navC = navTop + 64, navX = 54;
+        const bool fitsNav = navC + 66 < limit;
+        for (auto* k : { &up, &down, &left, &right, &zoom }) k->setVisible (fitsNav);
+        jog.setVisible (fitsNav); scrub.setVisible (fitsNav);
+        if (fitsNav)
+        {
+            zoom.setBounds (navX - 13, navC - 13, 26, 26);
+            up.setBounds (navX - 13, navC - 44, 26, 28); down.setBounds (navX - 13, navC + 16, 26, 28);
+            left.setBounds (navX - 44, navC - 13, 28, 26); right.setBounds (navX + 16, navC - 13, 28, 26);
+            scrub.setBounds (W - 38, navTop - 8, 26, 26);
+            jog.setBounds (W - 124, navTop + 22, 114, 114);
+        }
     }
+    void scrollChanged() {}
+
 private:
+    te::TransportControl& transport() { return vs.edit().getTransport(); }
+    void step (int dir)
+    {
+        auto& t = transport();
+        if (juce::ModifierKeys::currentModifiers.isShiftDown())
+        {   // jump between markers
+            auto& mm = vs.edit().getMarkerManager();
+            auto* m = dir > 0 ? mm.getNextMarker (t.getPosition() + te::TimeDuration::fromSeconds (0.001)) : mm.getPrevMarker (t.getPosition() - te::TimeDuration::fromSeconds (0.001));
+            if (m != nullptr) { t.setPosition (m->getPosition().getStart()); owner.touched ("Marker", m->getName()); }
+            return;
+        }
+        if (nudge.getToggleState())
+        {
+            if (auto* c = vs.getSelectedClip())
+            {
+                const double grid = vs.snapDiv > 0 ? 1.0 / vs.snapDiv : 1.0;
+                const double b = std::max (0.0, vs.timeToBeats (c->getPosition().getStart()) + dir * grid);
+                c->setStart (vs.beatsToTime (b), false, true);
+                owner.touched ("Nudge " + c->getName(), dawui::formatBarsBeats (vs.edit(), c->getPosition().getStart()));
+            }
+            else owner.touched ("Nudge", "Select a clip first");
+            return;
+        }
+        moveBars (dir);
+    }
+    void moveBars (int dir)
+    {
+        auto& t = transport();
+        const double bar = vs.session.barLength().inSeconds();
+        const double now = t.getPosition().inSeconds();
+        const double target = dir > 0 ? (std::floor (now / bar + 1e-6) + 1) * bar : std::max (0.0, (std::ceil (now / bar - 1e-6) - 1) * bar);
+        t.setPosition (te::TimePosition::fromSeconds (target));
+        owner.touched ("Position", dawui::formatBarsBeats (vs.edit(), t.getPosition()));
+    }
+    void hZoom (int dir) { vs.pixelsPerBeat = juce::jlimit (2.0, 400.0, vs.pixelsPerBeat * (dir > 0 ? 1.25 : 0.8)); owner.touched ("Zoom", juce::String (vs.pixelsPerBeat, 0) + " px / beat"); }
+    void vZoom (int dir)
+    {
+        for (auto* t : vs.session.getTracks (true))
+            t->state.setProperty ("vegaHeight", juce::jlimit (44, 260, (int) t->state.getProperty ("vegaHeight", 84) + dir * 16), nullptr);
+        owner.touched ("Track height", dir > 0 ? "Taller" : "Shorter");
+    }
+    void toggleMarker()
+    {
+        auto& mm = vs.edit().getMarkerManager();
+        const auto now = transport().getPosition();
+        for (auto& m : mm.getMarkers())
+            if (std::abs ((m->getPosition().getStart() - now).inSeconds()) < 0.05) { m->removeFromParent(); owner.touched ("Marker", "Removed"); return; }
+        int next = 1; for (auto& m : mm.getMarkers()) next = std::max (next, m->getMarkerID() + 1);
+        if (auto m = mm.createMarker (next, now, vs.session.barLength(), nullptr)) owner.touched ("Marker " + juce::String (next), dawui::formatBarsBeats (vs.edit(), now));
+    }
+    void jogTurn (double turns)
+    {
+        auto& t = transport();
+        if (scrub.getToggleState()) { te::scrub (t, turns * 40.0); return; }
+        const double beats = std::max (0.0, vs.timeToBeats (t.getPosition()) + turns * 4.0);   // one turn = one 4/4 bar
+        t.setPosition (vs.beatsToTime (beats));
+        owner.touched ("Jog", dawui::formatBarsBeats (vs.edit(), t.getPosition()));
+    }
     void timerCallback() override
     {
-        auto& t = vs.edit().getTransport();
-        if (rec.getToggleState() != t.isRecording()) rec.setToggleState (t.isRecording(), juce::dontSendNotification);
-        if (play.getToggleState() != t.isPlaying()) play.setToggleState (t.isPlaying(), juce::dontSendNotification);
-        if (mode.getToggleState() != owner.showEdit) mode.setToggleState (owner.showEdit, juce::dontSendNotification);
+        auto& t = transport();
+        auto set = [] (juce::Button& b, bool on) { if (b.getToggleState() != on) b.setToggleState (on, juce::dontSendNotification); };
+        set (rec, t.isRecording()); set (play, t.isPlaying()); set (stop, ! t.isPlaying() && ! t.isRecording());
+        set (cycle, t.looping.get()); set (drop, vs.edit().recordingPunchInOut.get()); set (click, vs.edit().clickTrackEnabled.get());
+        auto* sel = vs.getSelectedTrack(); set (solo, sel != nullptr && sel->isSolo (false));
+        set (editKey, owner.showEdit);
+        // hold rewind / fast-forward to keep moving
+        for (auto [k, dir] : { std::pair<juce::Button*, int> { &rew, -1 }, { &ffwd, 1 } })
+        {
+            if (k->isDown())
+            {
+                if (++holdTicks[dir > 0] > 6)
+                {
+                    held = true;
+                    const double beats = std::max (0.0, vs.timeToBeats (t.getPosition()) + dir * 1.0);
+                    t.setPosition (vs.beatsToTime (beats));
+                    owner.touched (dir > 0 ? "Fast forward" : "Rewind", dawui::formatBarsBeats (vs.edit(), t.getPosition()));
+                }
+            }
+            else holdTicks[dir > 0] = 0;
+        }
     }
     MixerView& owner; ViewState& vs;
-    xl::Key pageUp { xl::Key::up }, pageDown { xl::Key::down }, trackL { xl::Key::left }, trackR { xl::Key::right },
-            rec { xl::Key::rec }, play { xl::Key::play }, shift { xl::Key::text, "Shift" }, mode { xl::Key::text, "Mode" };
-    juce::Rectangle<int> oled, pageBox, trackBox, transportBox, shiftBox;
+    tp::Key marker, nudge, cycle, drop, replace, click, solo, scrub, editKey { tp::Key::square, juce::Colour (0xff8ff3f0) };
+    tp::Key bankL { tp::Key::pill }, bankR { tp::Key::pill }, chanL { tp::Key::pill }, chanR { tp::Key::pill };
+    tp::Key up, down, left, right, zoom { tp::Key::square, juce::Colour (0xff8ff3f0) };
+    tp::BigKey rew { tp::BigKey::rew }, ffwd { tp::BigKey::ffwd }, stop { tp::BigKey::stop }, play { tp::BigKey::play }, rec { tp::BigKey::rec };
+    tp::Jog jog;
+    juce::Rectangle<int> oled, transportBox, bankBox, shiftArea;
     juce::String line1 { "Mode Select" }, line2 { "Mixer" };
+    int holdTicks[2] {}; bool held = false;
 };
 
 //==============================================================================
@@ -733,6 +1034,14 @@ void MixerView::pageBy (int dir)
     viewport.setViewPosition (juce::jlimit (0, std::max (0, content.getWidth() - viewport.getWidth()), viewport.getViewPositionX() + dir * step), 0);
     const int first = viewport.getViewPositionX() / (Strip::W + 4) + 1;
     touched ("Page", "Ch " + juce::String (first) + " - " + juce::String (first + 7));
+}
+
+void MixerView::scrollStrips (int n)
+{
+    const int step = Strip::W + 4;
+    viewport.setViewPosition (juce::jlimit (0, std::max (0, content.getWidth() - viewport.getWidth()), viewport.getViewPositionX() + n * step), 0);
+    const int first = viewport.getViewPositionX() / step + 1;
+    touched ("Channel", "Ch " + juce::String (first) + " - " + juce::String (first + 7));
 }
 
 void MixerView::selectNeighbour (int dir)
