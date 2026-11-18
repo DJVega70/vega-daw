@@ -88,6 +88,12 @@ public:
         if (kind == DawSession::TrackKind::midi)
             if (auto* p = track->pluginList[0]; p != nullptr && p->isSynth()) sub = p->getName().toUpperCase();
         if (auto* out = owner.vs.session.getOutputBus (*track)) sub << "  >  " << out->getName().toUpperCase();
+        if (track->isFrozen (te::Track::individualFreeze))
+        {
+            g.setColour (juce::Colour (0xff7fd8ff)); g.setFont (VegaFonts::ui (9.0f, true));
+            g.drawText (juce::String::fromUTF8 ("\xe2\x9d\x84 FROZEN"), getWidth() - 70, 26, 62, 12, juce::Justification::right);
+            g.setColour (VegaColours::textDim); g.setFont (VegaFonts::ui (9.5f, true));
+        }
         g.drawText (sub, 12, 26, getWidth() - 20, 12, juce::Justification::left);
         if (const int lh = owner.laneHeight (*track); lh > 0)
         {
@@ -223,6 +229,11 @@ private:
         for (int i = 0; i < buses.size(); ++i) if (buses[i] != track.get()) route.addItem (201 + i, buses[i]->getName(), true, s.getOutputBus (*track) == buses[i]);
         m.addSubMenu ("Output", route);
         m.addSeparator();
+        const bool frozen = track->isFrozen (te::Track::individualFreeze);
+        if (DawSession::kindOf (*track) != DawSession::TrackKind::bus)
+            m.addItem (4, frozen ? "Unfreeze track" : "Freeze track (render plug-ins to save CPU)");
+        m.addItem (5, (bool) track->state.getProperty ("vegaAutoShown", false) ? "Hide automation lane" : "Show automation lane");
+        m.addSeparator();
         m.addItem (3, "Delete track");
         m.showMenuAsync ({}, [this, buses] (int r)
         {
@@ -232,6 +243,14 @@ private:
             else if (r == 200) owner.vs.session.routeToBus (*track, nullptr);
             else if (r > 200) owner.vs.session.routeToBus (*track, buses[r - 201]);
             else if (r == 3) { auto t = track; owner.vs.session.deleteTrack (*t); }
+            else if (r == 4)
+            {
+                const bool now = ! track->isFrozen (te::Track::individualFreeze);
+                auto res = track->setFrozen (now, te::Track::individualFreeze);
+                if (res.failed()) juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Freeze", res.getErrorMessage());
+                refresh();
+            }
+            else if (r == 5) { track->state.setProperty ("vegaAutoShown", ! (bool) track->state.getProperty ("vegaAutoShown", false), nullptr); owner.resized(); }
             owner.repaint();
         });
     }

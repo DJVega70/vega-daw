@@ -380,6 +380,20 @@ int main()
         check (a2.getTracks()[0]->getVolumePlugin()->volParam->getCurve().getNumPoints() == 2, "automation points saved with the project");
         o.deleteFile(); pf.deleteFile(); tone.deleteFile();
     }
+    {   // freeze: the synth track renders to a freeze file and still plays back
+        DawSession fz (engine);
+        auto* synth = fz.getTracks()[1];
+        auto clip = fz.insertMidiClip (*synth, te::TimePosition(), te::TimeDuration::fromSeconds (2));
+        if (clip) clip->getSequence().addNote (60, te::BeatPosition(), te::BeatDuration::fromBeats (2), 100, 0, nullptr);
+        auto res = synth->setFrozen (true, te::Track::individualFreeze);
+        check (res.wasOk() && synth->isFrozen (te::Track::individualFreeze), "freeze renders the synth track to audio" + (res.failed() ? " (" + res.getErrorMessage() + ")" : juce::String()));
+        auto o = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_freeze.wav");
+        fz.exportWav (o, te::TimeRange (te::TimePosition(), te::TimePosition::fromSeconds (2)));
+        const float pk = peakOf (o, engine);
+        check (pk > 0.01f, "frozen track still plays (peak " + juce::String (pk, 3) + ")");
+        check (synth->setFrozen (false, te::Track::individualFreeze).wasOk() && ! synth->isFrozen (te::Track::individualFreeze), "unfreeze");
+        o.deleteFile();
+    }
     out.deleteFile(); proj.deleteFile();
     std::cout << (fails == 0 ? "ALL PASSED" : "FAILURES: " + std::to_string (fails)) << "\n";
     return fails == 0 ? 0 : 1;
