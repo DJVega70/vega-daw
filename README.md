@@ -66,6 +66,13 @@ First run: **Options > Audio / MIDI settings** (pick ASIO / WASAPI on Windows, C
 
 ![mixer](docs/mixer.png)
 
+**AI stem separation**
+- Right-click an audio clip and choose **Separate stems (AI)...**, or use **File → Separate stems from a song (AI)...**.
+- Choose **4 stems** (Vocals, Drums, Bass, Other) or **6 stems** (also Guitar and Piano).
+- Each stem lands on its own coloured track, lined up exactly with the original clip, and the original clip is muted. The WAV files go to a **Stems** folder next to the project.
+- It uses Meta's Demucs v4 model, running locally on your CPU via [demucs.cpp](https://github.com/sevagh/demucs.cpp).
+- The model (84 MB, or 55 MB for 6 stems) is downloaded once, the first time you use it.
+
 **Using plug-ins**
 - **Load:** in the PLUGINS panel, double-click a plug-in or drag it onto a track or mixer strip. Its window opens right away. An instrument goes on the selected instrument track, or on a new one. An effect goes on the selected track.
 - **Reopen:** every track header has an **INST** button that opens its instrument and an **FX** button that lists every plug-in on the track; click one to open it. In the mixer, click the instrument name or an insert slot.

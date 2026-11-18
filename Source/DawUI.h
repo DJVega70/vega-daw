@@ -12,7 +12,8 @@ struct ViewState
     te::EditItemID selectedClip, selectedTrack;
     bool followPlayhead = true;
     std::function<void()> onSelectionChanged, onOpenPianoRoll;
-    std::function<bool (const juce::var& dragDescription, te::AudioTrack* target)> onPluginDropped;   // plug-in dragged from the browser
+    std::function<bool (const juce::var& dragDescription, te::AudioTrack* target)> onPluginDropped;
+    std::function<void (te::WaveAudioClip*)> onSeparateClip;                                          // AI stem separation of an audio clip   // plug-in dragged from the browser
 
     te::Edit& edit() { return session.edit(); }
     te::TempoSequence& tempo() { return session.edit().tempoSequence; }

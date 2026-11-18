@@ -34,7 +34,8 @@ target_sources(VegaDAW PRIVATE
     Source/PianoRoll.cpp
     Source/MixerView.cpp
     Source/HuiSurface.cpp
-    Source/Controllers.cpp)
+    Source/Controllers.cpp
+    Source/StemSeparator.cpp)
 
 target_compile_definitions(VegaDAW PRIVATE
     JUCE_PLUGINHOST_AU=1
@@ -69,11 +70,44 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(VegaDAW PRIVATE "-latomic")
 endif()
 
+
+# ---- AI stem separation: demucs.cpp (MIT, Demucs v4 inference in C++) + Eigen 3.4 (MPL-2.0)
+# Weights are NOT bundled; the app downloads them on first use.
+include(FetchContent)
+if (DEFINED DEMUCS_DIR)
+    set(demucs_SOURCE_DIR ${DEMUCS_DIR})
+else()
+    FetchContent_Declare(demucs GIT_REPOSITORY https://github.com/sevagh/demucs.cpp GIT_TAG 4edae497a114de1ccb17ac9b4a2b8fc0144714d7
+                         GIT_SUBMODULES "" SOURCE_SUBDIR do-not-add)
+    FetchContent_MakeAvailable(demucs)
+endif()
+if (DEFINED EIGEN_DIR)
+    set(VEGA_EIGEN_INCLUDE ${EIGEN_DIR})
+else()
+    FetchContent_Declare(eigen URL https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz SOURCE_SUBDIR do-not-add)
+    FetchContent_MakeAvailable(eigen)
+    set(VEGA_EIGEN_INCLUDE ${eigen_SOURCE_DIR})
+endif()
+file(GLOB DEMUCS_SOURCES ${demucs_SOURCE_DIR}/src/*.cpp)
+add_library(vega_demucs STATIC ${DEMUCS_SOURCES})
+target_include_directories(vega_demucs PUBLIC ${demucs_SOURCE_DIR}/src ${VEGA_EIGEN_INCLUDE})
+target_compile_features(vega_demucs PUBLIC cxx_std_17)
+target_compile_definitions(vega_demucs PRIVATE NDEBUG PUBLIC EIGEN_NO_DEBUG _USE_MATH_DEFINES)
+set_target_properties(vega_demucs PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if (MSVC)
+    target_compile_options(vega_demucs PRIVATE /O2 /bigobj /EHsc /W0)
+    target_compile_options(vega_demucs PUBLIC /bigobj)
+else()
+    target_compile_options(vega_demucs PRIVATE -O3 -w)
+endif()
+target_link_libraries(VegaDAW PRIVATE vega_demucs)
+
 # headless self-test (engine round trips: tracks, clips, routing, render)
 option(VEGA_TESTS "Build the headless test app" OFF)
 if (VEGA_TESTS)
     juce_add_console_app(VegaDAWTest PRODUCT_NAME "VegaDAWTest")
-    target_sources(VegaDAWTest PRIVATE tests/DawTest.cpp Source/DawSession.cpp Source/HuiSurface.cpp)
+    target_sources(VegaDAWTest PRIVATE tests/DawTest.cpp Source/DawSession.cpp Source/HuiSurface.cpp Source/StemSeparator.cpp)
+    target_link_libraries(VegaDAWTest PRIVATE vega_demucs)
     target_compile_definitions(VegaDAWTest PRIVATE
         JUCE_PLUGINHOST_AU=1 JUCE_PLUGINHOST_VST3=1 JUCE_MODAL_LOOPS_PERMITTED=1 JUCE_STRICT_REFCOUNTEDPOINTER=1
         JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 TRACKTION_ENABLE_TIMESTRETCH_SOUNDTOUCH=1 TRACKTION_ENABLE_CONTROL_SURFACES=1 VEGA_HEADLESS=1)

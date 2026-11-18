@@ -1,5 +1,6 @@
 #include "../Source/DawSession.h"
 #include "../Source/HuiSurface.h"
+#include "../Source/StemSeparator.h"
 #include <iostream>
 static int fails = 0;
 static void check (bool ok, const juce::String& m) { std::cout << (ok ? "PASS " : "FAIL ") << m << "\n"; if (! ok) ++fails; }
@@ -258,6 +259,90 @@ int main()
         int count = 0; for (auto* p : m2.edit().getMasterPluginList().getPlugins()) if (dynamic_cast<VegaMasterStripPlugin*> (p)) ++count;
         check (ms2 != nullptr && count == 1 && std::abs (ms2->get (M::hfGain) - 4.5f) < 0.01f, "master strip settings restored, one instance");
         pf.deleteFile(); tone.deleteFile();
+    }
+    {   // stem placement: stems line up with the original clip, original gets muted
+        DawSession p (engine);
+        auto tmpDir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_stems_test");
+        tmpDir.deleteRecursively(); tmpDir.createDirectory();
+        juce::Array<juce::File> files;
+        for (auto name : { "Drums", "Bass", "Other", "Vocals" })
+        {
+            auto f = tmpDir.getChildFile (juce::String ("song - ") + name + ".wav");
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (f), 44100.0, 2, 24, {}, 0));
+            juce::AudioBuffer<float> b (2, 44100 * 4); b.clear(); b.setSample (0, 100, 0.5f);
+            w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+            files.add (f);
+        }
+        auto* src = p.getTracks()[0];
+        auto orig = p.insertAudioFile (*src, files[0], te::TimePosition::fromSeconds (2.0));
+        const int before = p.getTracks().size();
+        auto made = p.placeStems (files, StemSeparator::stemNames (StemSeparator::Model::fourStems), "song", orig.get());
+        bool aligned = made.size() == 4;
+        for (auto* t : made) if (t->getClips().size() != 1 || std::abs (t->getClips()[0]->getPosition().getStart().inSeconds() - 2.0) > 1e-6) aligned = false;
+        check (aligned && p.getTracks().size() == before + 4 && orig->isMuted(), "separated stems land on 4 new tracks lined up with the clip; original muted");
+        check (made.size() == 4 && made[3]->getName() == "song Vocals", "stem tracks are named after the clip (" + (made.size() == 4 ? made[3]->getName() : juce::String()) + ")");
+        tmpDir.deleteRecursively();
+    }
+    {   // real AI separation (runs when the Demucs model is available, e.g. in CI)
+        const juce::String modelPath = juce::SystemStats::getEnvironmentVariable ("VEGA_DEMUCS_MODEL", {});
+        if (modelPath.isEmpty() || ! juce::File (modelPath).existsAsFile())
+            std::cout << "SKIP Demucs separation (set VEGA_DEMUCS_MODEL to a ggml-model-htdemucs-4s-f16.bin to run it)\n";
+        else
+        {
+            const int n = 44100 * 16;
+            juce::AudioBuffer<float> mix (2, n); mix.clear();
+            juce::Random rnd (3);
+            const double tau = 2 * juce::MathConstants<double>::pi;
+            for (int i = 0; i < n; ++i)
+            {
+                const double t = i / 44100.0, beat = std::fmod (t, 0.5), half = std::fmod (t, 0.25);
+                const double bassF = std::fmod (t, 2.0) < 1.0 ? 55.0 : 73.4;
+                double v = 0.28 * std::sin (tau * bassF * t) * (0.6 + 0.4 * std::exp (-beat * 4));                     // bass line
+                v += 0.6 * std::sin (tau * (50 + 90 * std::exp (-beat * 30)) * beat) * std::exp (-beat * 14);          // kick
+                v += 0.12 * (rnd.nextFloat() * 2 - 1) * std::exp (-half * 120);                                       // hats
+                const double f0 = 220 * std::pow (2.0, (std::floor (t) == 3 || std::floor (t) == 9 ? 3 : 0) / 12.0) * (1 + 0.01 * std::sin (tau * 5.5 * t));
+                double voice = 0; for (int k = 1; k <= 12; ++k) voice += std::sin (tau * f0 * k * t) / k * (k == 3 || k == 4 ? 2.0 : 1.0);
+                v += 0.08 * voice * (std::fmod (t, 4.0) < 3.0 ? 1.0 : 0.0);                                             // sung line
+                mix.setSample (0, i, (float) v); mix.setSample (1, i, (float) v);
+            }
+            std::vector<juce::AudioBuffer<float>> stems; juce::String err;
+            const auto t0 = juce::Time::getMillisecondCounterHiRes();
+            float lastP = 0;
+            const bool ok = StemSeparator::separateBuffer (juce::File (modelPath), mix, stems, [&] (float pr, const juce::String&) { lastP = pr; return true; }, err, 2);
+            const double secs = (juce::Time::getMillisecondCounterHiRes() - t0) / 1000.0;
+            check (ok && stems.size() == 4, "Demucs separated 16 s into 4 stems in " + juce::String (secs, 1) + " s" + (err.isNotEmpty() ? " (" + err + ")" : juce::String()));
+            if (ok && stems.size() == 4)
+            {
+                double e = 0, r = 0;
+                for (int i = 0; i < n; ++i) { float sum = 0; for (auto& st : stems) sum += st.getSample (0, i); e += (sum - mix.getSample (0, i)) * (sum - mix.getSample (0, i)); r += mix.getSample (0, i) * mix.getSample (0, i); }
+                const double recon = 10 * std::log10 (e / r + 1e-12);
+                check (recon < -10, "stems add back up to the mix (error " + juce::String (recon, 1) + " dB)");
+                auto bandEnergy = [&] (const juce::AudioBuffer<float>& b, double lo, double hi)
+                {
+                    juce::dsp::FFT fft (13); const int N = 1 << 13; double sum = 0;
+                    for (int off = 0; off + N <= n; off += N)
+                    {
+                        std::vector<float> d (2 * N, 0.0f);
+                        for (int i = 0; i < N; ++i) d[(size_t) i] = b.getSample (0, off + i) * (float) (0.5 - 0.5 * std::cos (tau * i / N));
+                        fft.performFrequencyOnlyForwardTransform (d.data());
+                        for (int k = (int) (lo * N / 44100); k <= (int) (hi * N / 44100); ++k) sum += (double) d[(size_t) k] * d[(size_t) k];
+                    }
+                    return sum;
+                };
+                // stems: 0 drums, 1 bass, 2 other, 3 vocals
+                double bassLow[4], hiBand[4], bassTot = 0, hiTot = 0;
+                for (int s2 = 0; s2 < 4; ++s2) { bassLow[s2] = bandEnergy (stems[(size_t) s2], 52, 78); hiBand[s2] = bandEnergy (stems[(size_t) s2], 7000, 16000); bassTot += bassLow[s2]; hiTot += hiBand[s2]; }
+                check (bassLow[1] / bassTot > 0.4, "bass line goes to the Bass stem (" + juce::String (100 * bassLow[1] / bassTot, 0) + "% of 52-78 Hz)");
+                check (hiBand[0] / hiTot > 0.4, "hi-hats go to the Drums stem (" + juce::String (100 * hiBand[0] / hiTot, 0) + "% of 7-16 kHz)");
+            }
+        }
+    }
+    {   // without the model: clean error
+        juce::AudioFormatManager fm; fm.registerBasicFormats();
+        auto r = StemSeparator::separate (StemSeparator::Model::sixStems, juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("nope.wav"),
+                                          juce::File::getSpecialLocation (juce::File::tempDirectory), fm, nullptr);
+        check (! r.ok && r.error.isNotEmpty(), "separation reports a clear error when it can't run (" + r.error + ")");
     }
     out.deleteFile(); proj.deleteFile();
     std::cout << (fails == 0 ? "ALL PASSED" : "FAILURES: " + std::to_string (fails)) << "\n";

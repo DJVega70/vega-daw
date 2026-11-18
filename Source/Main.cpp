@@ -6,6 +6,7 @@
 #include "PianoRoll.h"
 #include "Controllers.h"
 #include "PluginBrowser.h"
+#include "StemSeparator.h"
 
 //==============================================================================
 class TransportBar : public juce::Component, private juce::Timer
@@ -123,6 +124,7 @@ public:
             if (auto* it = browser.itemForDragDescription (d)) { loadFromBrowser (*it, t, true); return true; }
             return false;
         };
+        vs.onSeparateClip = [this] (te::WaveAudioClip* c) { if (c != nullptr) startSeparation (c->getOriginalFile(), c->getName(), te::WaveAudioClip::Ptr (c)); };
         // pick up newly installed plug-ins in the background; first run does a full visible scan
         juce::Timer::callAfterDelay (1500, [this, sp = juce::Component::SafePointer<MainComponent> (this)]
         {
@@ -197,7 +199,7 @@ public:
         if (idx == 0)
         {
             m.addItem (1, "New project"); m.addItem (2, "Open...      Ctrl+O"); m.addItem (3, "Save          Ctrl+S"); m.addItem (4, "Save as...");
-            m.addSeparator(); m.addItem (5, "Import audio / MIDI..."); m.addItem (6, "Export mixdown (WAV)...");
+            m.addSeparator(); m.addItem (5, "Import audio / MIDI..."); m.addItem (7, "Separate stems from a song (AI)..."); m.addItem (6, "Export mixdown (WAV)...");
             m.addSeparator(); m.addItem (9, "Quit");
         }
         else if (idx == 1)
@@ -239,6 +241,7 @@ public:
             case 4: save (true); break;
             case 5: importFiles(); break;
             case 6: exportMix(); break;
+            case 7: separateFile(); break;
             case 9: juce::JUCEApplication::getInstance()->systemRequestedQuit(); break;
             case 20: session.edit().getUndoManager().undo(); break;
             case 21: session.edit().getUndoManager().redo(); break;
@@ -299,6 +302,111 @@ private:
         if (onTitle) onTitle ((f == juce::File() ? juce::String ("Untitled") : f.getFileNameWithoutExtension()) + (session.hasUnsavedChanges() ? " *" : "") + "  -  Vega Productions DAW");
     }
     void showMixer (bool m) { mixer.setVisible (m); arrange.setVisible (! m); transport.setViewLabel (m); if (m) mixer.rebuild(); }
+
+    // ---------------------------------------------------------------- AI stem separation
+    void separateFile()
+    {
+        chooser = std::make_unique<juce::FileChooser> ("Choose a song to separate", juce::File::getSpecialLocation (juce::File::userMusicDirectory), "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc)
+        {
+            if (fc.getResult().existsAsFile()) startSeparation (fc.getResult(), fc.getResult().getFileNameWithoutExtension(), nullptr);
+        });
+    }
+
+    void startSeparation (const juce::File& source, const juce::String& baseName, te::WaveAudioClip::Ptr clip)
+    {
+        if (! source.existsAsFile())
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Separate stems", "The audio file for this clip can't be found:\n" + source.getFullPathName());
+            return;
+        }
+        auto opts = juce::MessageBoxOptions().withTitle ("Separate stems").withIconType (juce::MessageBoxIconType::NoIcon)
+            .withMessage ("Split \"" + baseName + "\" into separate tracks with AI (Demucs v4).\n\n"
+                          "4 stems: Vocals, Drums, Bass, Other\n6 stems: also Guitar and Piano (slightly lower quality)\n\n"
+                          "It runs on your computer. Expect roughly 1-2x the song's length on a modern CPU.")
+            .withButton ("4 stems", 1).withButton ("6 stems", 2).withButton ("Cancel", 0);
+        juce::AlertWindow::showAsync (opts, [this, source, baseName, clip] (int r)
+        {
+            if (r == 0) return;
+            const auto model = r == 2 ? StemSeparator::Model::sixStems : StemSeparator::Model::fourStems;
+            ensureModel (model, [this, source, baseName, clip, model] { runSeparation (model, source, baseName, clip); });
+        });
+    }
+
+    void ensureModel (StemSeparator::Model m, std::function<void()> then)
+    {
+        if (StemSeparator::hasModel (m)) { then(); return; }
+        auto opts = juce::MessageBoxOptions().withTitle ("Download the separation model").withIconType (juce::MessageBoxIconType::QuestionIcon)
+            .withMessage ("Stem separation needs the Demucs v4 model (" + StemSeparator::modelSizeText (m) + "), downloaded once from Hugging Face "
+                          "(huggingface.co/datasets/Retrobear/demucs.cpp) and kept in:\n" + StemSeparator::modelsFolder().getFullPathName() + "\n\n"
+                          "The Demucs weights are released by Meta for research / non-commercial use.")
+            .withButton ("Download", 1).withButton ("Cancel", 0);
+        juce::AlertWindow::showAsync (opts, [this, m, then] (int r)
+        {
+            if (r != 1) return;
+            struct Downloader : juce::ThreadWithProgressWindow
+            {
+                Downloader (StemSeparator::Model mm) : ThreadWithProgressWindow ("Downloading the separation model...", true, true), model (mm) {}
+                void run() override
+                {
+                    StemSeparator::modelsFolder().createDirectory();
+                    auto tmp = StemSeparator::modelFile (model).withFileExtension ("part");
+                    tmp.deleteFile();
+                    auto in = StemSeparator::modelUrl (model).createInputStream (juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
+                                                                                    .withConnectionTimeoutMs (20000).withNumRedirectsToFollow (8));
+                    if (in == nullptr) { error = "Couldn't connect to Hugging Face. Check your internet connection."; return; }
+                    std::unique_ptr<juce::FileOutputStream> out (tmp.createOutputStream());
+                    if (out == nullptr) { error = "Couldn't write to " + tmp.getFullPathName(); return; }
+                    const auto total = in->getTotalLength();
+                    juce::HeapBlock<char> buf (1 << 16);
+                    juce::int64 done = 0;
+                    while (! in->isExhausted() && ! threadShouldExit())
+                    {
+                        const int n = in->read (buf.getData(), 1 << 16);
+                        if (n <= 0) break;
+                        out->write (buf.getData(), (size_t) n); done += n;
+                        if (total > 0) setProgress ((double) done / (double) total);
+                        setStatusMessage (juce::String (done / (1024 * 1024)) + " MB" + (total > 0 ? " of " + juce::String (total / (1024 * 1024)) + " MB" : juce::String()));
+                    }
+                    out.reset();
+                    if (threadShouldExit()) { tmp.deleteFile(); error = "cancelled"; return; }
+                    if (done < 10 * 1024 * 1024 || (total > 0 && done != total)) { tmp.deleteFile(); error = "The download didn't complete. Please try again."; return; }
+                    tmp.moveFileTo (StemSeparator::modelFile (model));
+                }
+                StemSeparator::Model model; juce::String error;
+            } dl (m);
+            dl.runThread();
+            if (dl.error == "cancelled") return;
+            if (dl.error.isNotEmpty()) { juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Download", dl.error); return; }
+            then();
+        });
+    }
+
+    void runSeparation (StemSeparator::Model m, const juce::File& source, const juce::String& baseName, te::WaveAudioClip::Ptr clip)
+    {
+        auto folder = session.getProjectFile() != juce::File() ? session.getProjectFile().getParentDirectory().getChildFile ("Stems")
+                                                             : juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Vega Productions").getChildFile ("Stems");
+        auto outDir = folder.getChildFile (juce::File::createLegalFileName (baseName));
+        struct Job : juce::ThreadWithProgressWindow
+        {
+            Job (te::Engine& e, StemSeparator::Model mm, juce::File src, juce::File out) : ThreadWithProgressWindow ("Separating stems...", true, true), engine (e), model (mm), source (src), outDir (out) {}
+            void run() override
+            {
+                result = StemSeparator::separate (model, source, outDir, engine.getAudioFileFormatManager().readFormatManager,
+                    [this] (float p, const juce::String& msg) { setProgress (p); setStatusMessage (msg); return ! threadShouldExit(); });
+            }
+            te::Engine& engine; StemSeparator::Model model; juce::File source, outDir; StemSeparator::Result result;
+        } job (engine, m, source, outDir);
+        const bool finished = job.runThread (juce::Thread::Priority::normal);
+        if (! finished || (! job.result.ok && job.result.error.isEmpty())) return;    // cancelled
+        if (! job.result.ok) { juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Separate stems", job.result.error); return; }
+        auto tracks = session.placeStems (job.result.stems, StemSeparator::stemNames (m), baseName, clip.get(),
+                                          clip == nullptr ? session.edit().getTransport().getPosition() : te::TimePosition());
+        arrange.rebuildHeaders(); mixer.rebuild();
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Separate stems",
+            juce::String (tracks.size()) + " stem tracks added" + (clip != nullptr ? " (the original clip is muted)." : ".") + "\n\nThe WAV files are in:\n" + outDir.getFullPathName());
+    }
+
     void showBrowser (bool show) { browser.setVisible (show); transport.setBrowserShown (show); resized(); }
 
     /** Load a browser item: instruments go on the target / selected instrument track (or a new one),

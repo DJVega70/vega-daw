@@ -504,6 +504,8 @@ public:
             juce::PopupMenu gain; for (int db : { -12, -6, -3, 0, 3, 6, 12 }) gain.addItem (200 + db + 12, juce::String (db) + " dB", true, juce::roundToInt (ac->getGainDB()) == db);
             m.addSubMenu ("Clip gain", gain);
             m.addItem (13, "Slice at transients (new clips)");
+            m.addSeparator();
+            m.addItem (14, "Separate stems (AI)...");
         }
         else if (auto* mc = dynamic_cast<te::MidiClip*> (&c))
         {
@@ -532,6 +534,7 @@ public:
             else if (ac != nullptr && r == 12) { if (ac->isLooping()) ac->disableLooping(); else ac->setLoopRangeBeats ({ te::BeatPosition(), ac->getLengthInBeats() }); }
             else if (ac != nullptr && r >= 188 && r <= 224) ac->setGainDB ((float) (r - 212));
             else if (ac != nullptr && r == 13) owner.vs.session.sliceAtTransients (*ac);
+            else if (ac != nullptr && r == 14 && vs.onSeparateClip) vs.onSeparateClip (ac);
             else if (r == 20 && vs.onOpenPianoRoll) vs.onOpenPianoRoll();
             else if (r == 21) if (auto* mc = dynamic_cast<te::MidiClip*> (c)) quantise (*mc);
             owner.repaint();

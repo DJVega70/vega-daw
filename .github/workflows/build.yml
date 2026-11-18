@@ -24,6 +24,11 @@ jobs:
         run: |
           cmake -B build -DTE_DIR=$PWD/te -DVEGA_TESTS=ON -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target VegaDAWTest -j4
+      - name: Download the Demucs model (for the real stem-separation test)
+        continue-on-error: true
+        run: |
+          curl -fL --retry 3 -o htdemucs-4s.bin "https://huggingface.co/datasets/Retrobear/demucs.cpp/resolve/main/ggml-model-htdemucs-4s-f16.bin"
+          ls -la htdemucs-4s.bin && echo "VEGA_DEMUCS_MODEL=$PWD/htdemucs-4s.bin" >> $GITHUB_ENV
       - name: Run engine self-test
         run: build/VegaDAWTest_artefacts/Release/VegaDAWTest
 

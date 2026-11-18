@@ -1,3 +1,4 @@
+#include <map>
 #include <set>
 #include "DawSession.h"
 
@@ -412,4 +413,29 @@ bool DawSession::exportWav (const juce::File& f, std::optional<te::TimeRange> ra
     p.time = r; p.tracksToDo = tracksToDo; p.usePlugins = true; p.useMasterPlugins = true; p.checkNodesForAudio = false;
     p.destFile.deleteFile();
     return te::Renderer::renderToFile ("Export", p).existsAsFile();
+}
+
+juce::Array<te::AudioTrack*> DawSession::placeStems (const juce::Array<juce::File>& stems, const juce::StringArray& names, const juce::String& baseName,
+                                                     te::WaveAudioClip* original, te::TimePosition at)
+{
+    static const std::map<juce::String, juce::uint32> stemColour {
+        { "Vocals", 0xffe8708a }, { "Drums", 0xffffa25e }, { "Bass", 0xff7ee87a }, { "Other", 0xff6fb7ff }, { "Guitar", 0xffe8b448 }, { "Piano", 0xffa58bff } };
+    juce::Array<te::AudioTrack*> made;
+    // put the stems right after the original clip's track (or at the end)
+    for (int i = 0; i < stems.size(); ++i)
+    {
+        auto* t = addTrack (TrackKind::audio, baseName + " " + names[i]);
+        if (t == nullptr) continue;
+        if (auto it = stemColour.find (names[i]); it != stemColour.end()) t->state.setProperty ("vegaColour", juce::Colour (it->second).toString(), nullptr);
+        auto c = insertAudioFile (*t, stems[i], original != nullptr ? original->getPosition().getStart() : at);
+        if (c != nullptr && original != nullptr)
+        {
+            c->setPosition (original->getPosition());          // same start, length and offset into the file
+            if (original->getAutoTempo() || std::abs (original->getPitchChange()) > 0.01f) setClipWarp (*c, original->getAutoTempo(), original->getPitchChange());
+            c->setGainDB (original->getGainDB());
+        }
+        made.add (t);
+    }
+    if (original != nullptr && ! made.isEmpty()) original->setMuted (true);
+    return made;
 }
