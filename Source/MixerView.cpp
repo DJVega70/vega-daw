@@ -929,7 +929,9 @@ public:
         stop.setTooltip ("Stop (again: return to zero)");
         startTimerHz (30);
     }
-    ~ControlPanel() override { if (masterAdded && masterCtx != nullptr) masterCtx->masterLevels.removeClient (client); }
+    ~ControlPanel() override { forgetEdit(); }
+    /** Stop metering the current Edit (called before it's destroyed) */
+    void forgetEdit() { if (masterAdded && masterCtx != nullptr) masterCtx->masterLevels.removeClient (client); masterAdded = false; masterCtx = nullptr; }
 
     void show (const juce::String& a, const juce::String& b) { line1 = a; line2 = b; canvas.repaint(); }
     void resized() override { canvas.setTransform (juce::AffineTransform::scale ((float) getHeight() / CH)); }
@@ -1291,7 +1293,7 @@ MixerView::MixerView (ViewState& v) : vs (v)
     startTimerHz (25);
 }
 MixerView::~MixerView() { clearAll(); }
-void MixerView::clearAll() { strips.clear(); master.reset(); lastEdit = nullptr; lastLayout.clear(); }
+void MixerView::clearAll() { strips.clear(); master.reset(); if (panel != nullptr) panel->forgetEdit(); lastEdit = nullptr; lastLayout.clear(); }
 
 void MixerView::rebuild()
 {

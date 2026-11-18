@@ -128,6 +128,7 @@ public:
     MainComponent (te::Engine& e) : engine (e), session (e), vs (session), hub (e, session), transport (vs), arrange (vs), mixer (vs), pianoRoll (vs), browser (vs)
     {
         setLookAndFeel (&lnf);
+        session.edit().getAutomationRecordManager().setWritingAutomation (false);
         menuBar.setModel (this);
         addAndMakeVisible (menuBar); addAndMakeVisible (transport); addAndMakeVisible (arrange);
         addChildComponent (mixer); addChildComponent (pianoRoll); addChildComponent (divider);
@@ -153,7 +154,7 @@ public:
         hub.autoConnect();
         juce::Timer::callAfterDelay (1200, [sp = juce::Component::SafePointer<MainComponent> (this)] { if (sp != nullptr) sp->autoDetectMcu(); });
         pianoRoll.onClose = [this] { showPianoRoll (false); };
-        session.onBeforeEditChange = [this] { engine.getExternalControllerManager().detachFromEdit (&session.edit()); mixer.clearAll(); };
+        session.onBeforeEditChange = [this] { engine.getExternalControllerManager().detachFromEdit (&session.edit()); arrange.clearAll(); mixer.clearAll(); };
         session.onEditChanged = [this] { arrange.editChanged(); mixer.rebuild(); hub.editChanged(); transport.refreshFromEdit(); setupInputs(); showPianoRoll (false); updateTitle(); };
         divider.onDrag = [this] (int dy) { pianoH = juce::jlimit (160, getHeight() - 240, pianoH - dy); resized(); };
         setupInputs();
@@ -567,6 +568,7 @@ private:
         }
         session.edit().getTransport().ensureContextAllocated();
         engine.getExternalControllerManager().setCurrentEdit (&session.edit(), &selection);
+        session.edit().getAutomationRecordManager().setWritingAutomation (false);   // automation write always starts off
         routeMidiToSelectedTrack();
     }
     // play your keyboard into whichever instrument track is selected

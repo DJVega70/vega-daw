@@ -585,6 +585,7 @@ public:
         repaint();
     }
     te::AudioTrack* autoTrack = nullptr; te::AutomatableParameter::Ptr autoParam; int autoPoint = -1, autoTop = 0, autoH = 0;
+    void forgetEdit() { autoTrack = nullptr; autoParam = nullptr; autoPoint = -1; warpDragIndex = -1; drag = Drag::none; }
 
     // ---------------------------------------------------------------- mouse
     enum class Drag { none, move, trimStart, trimEnd, fadeIn, fadeOut };
@@ -1093,4 +1094,10 @@ void ArrangeView::itemDropped (const SourceDetails& d)
     auto p = lanes->getLocalPoint (this, d.localPosition.toInt());
     auto* t = p.y >= 0 ? trackAtY (p.y) : nullptr;
     if (vs.onPluginDropped) vs.onPluginDropped (d.description, t);
+}
+
+void ArrangeView::clearAll()
+{
+    headers.clear();
+    if (lanes != nullptr) lanes->forgetEdit();
 }

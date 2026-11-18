@@ -9,6 +9,7 @@ public:
     ~ArrangeView() override;
     void editChanged();                // the session's Edit object was replaced
     void rebuildHeaders();
+    void clearAll();      // drop every reference into the current Edit (call before it's destroyed)
     void resized() override;
     void paint (juce::Graphics&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
