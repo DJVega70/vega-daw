@@ -5,6 +5,7 @@
     three knob rows with LED strips (send A / send B / pan), long-throw faders with scale ticks,
     two rows of lit pads (Solo/Arm, Mute/Select), and a left control column with a display,
     Page / Track buttons, Record / Play and Shift / Mode. */
+class MasterSection;
 class MixerView : public juce::Component, public juce::DragAndDropTarget, private juce::Timer
 {
 public:
@@ -29,7 +30,7 @@ private:
     void timerCallback() override;
     ViewState& vs;
     juce::Viewport viewport; juce::Component content;
-    juce::OwnedArray<Strip> strips; std::unique_ptr<Strip> master;
+    juce::OwnedArray<Strip> strips; std::unique_ptr<MasterSection> master;
     std::unique_ptr<ControlPanel> panel;
     juce::String lastLayout; te::Edit* lastEdit = nullptr;
 };

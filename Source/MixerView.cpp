@@ -176,6 +176,8 @@ public:
 };
 } // namespace xl
 
+#include "MasterSection.h"
+
 //==============================================================================
 namespace mixlayout
 {
@@ -678,7 +680,7 @@ void MixerView::rebuild()
     strips.clear();
     int i = 0;
     for (auto* t : vs.session.getTracks (true)) content.addAndMakeVisible (strips.add (new Strip (*this, vs, t, i++)));
-    if (master == nullptr || &vs.edit() != lastEdit) { master = std::make_unique<Strip> (*this, vs, nullptr, 0); addAndMakeVisible (*master); lastEdit = &vs.edit(); }
+    if (master == nullptr || &vs.edit() != lastEdit) { master = std::make_unique<MasterSection> (vs); addAndMakeVisible (*master); lastEdit = &vs.edit(); }
     resized();
 }
 
@@ -688,15 +690,13 @@ void MixerView::resized()
     const int h = r.getHeight() - 10;
     panel->setBounds (r.removeFromLeft (ControlPanel::W).withHeight (h));
     r.removeFromLeft (6);
-    master->setBounds (r.removeFromRight (Strip::W).withHeight (h));
+    master->setBounds (r.removeFromRight (master->widthForHeight (h)).withHeight (h));
     r.removeFromRight (10);
     viewport.setBounds (r);
     int editH = 0;
     if (showEdit) for (auto* s : strips) editH = std::max (editH, s->editNeeded());
     int x = 0;
     for (auto* s : strips) { s->editH = editH; s->setBounds (x, 0, Strip::W, h); x += Strip::W + 4; }
-    master->editH = editH;
-    master->resized();
     content.setSize (std::max (x, r.getWidth()), h);
     for (auto* s : strips) s->resized();
     repaint();
@@ -747,7 +747,6 @@ void MixerView::timerCallback()
     for (auto* s : strips) layout << s->layoutKey();
     if (layout != lastLayout) { lastLayout = layout; rebuild(); }
     for (auto* s : strips) s->refresh();
-    master->refresh();
 }
 
 void MixerView::itemDropped (const SourceDetails& d)

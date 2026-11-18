@@ -197,6 +197,68 @@ int main()
         check (count == 1, "exactly one DJ EQ per channel after reopening");
         pf.deleteFile(); tone.deleteFile();
     }
+    {   // master strip: EQ, filters, compressor, gate on the master bus
+        DawSession m (engine);
+        auto* ms = m.masterStrip (false);
+        check (ms != nullptr, "master bus has the master strip");
+        auto tone = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_ms_tones.wav");
+        {
+            tone.deleteFile();
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (tone), 48000.0, 2, 24, {}, 0));
+            juce::AudioBuffer<float> b (2, 48000 * 3);
+            for (int i = 0; i < b.getNumSamples(); ++i)
+            {
+                const double t = i / 48000.0;
+                const float v = (float) (0.2 * std::sin (2 * juce::MathConstants<double>::pi * 50 * t) + 0.2 * std::sin (2 * juce::MathConstants<double>::pi * 1000 * t) + 0.2 * std::sin (2 * juce::MathConstants<double>::pi * 12000 * t));
+                b.setSample (0, i, v); b.setSample (1, i, v);
+            }
+            w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+        }
+        m.insertAudioFile (*m.getTracks()[0], tone, te::TimePosition());
+        auto render = [&] (std::function<void()> setup, const char* name)
+        {
+            for (int i = 0; i < VegaMasterStripPlugin::numParams; ++i) ms->params[i]->setParameter (VegaMasterStripPlugin::def (i).def, juce::sendNotificationSync);
+            setup();
+            auto o = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile (juce::String ("vega_ms_") + name + ".wav");
+            m.exportWav (o, te::TimeRange (te::TimePosition(), te::TimePosition::fromSeconds (2.5)));
+            std::array<float, 3> r { toneDb (o, engine, 50), toneDb (o, engine, 1000), toneDb (o, engine, 12000) };
+            o.deleteFile();
+            return r;
+        };
+        using M = VegaMasterStripPlugin;
+        auto setp = [&] (int p, float v) { ms->params[p]->setParameter (v, juce::sendNotificationSync); };
+        const auto flat = render ([] {}, "flat");
+        auto hp = render ([&] { setp (M::hpf, 200); }, "hp");
+        check (hp[0] < flat[0] - 20 && std::abs (hp[1] - flat[1]) < 1.0f, "master HP filter at 200 Hz cuts 50 Hz by " + juce::String (flat[0] - hp[0], 1) + " dB");
+        auto lp = render ([&] { setp (M::lpf, 3000); }, "lp");
+        check (lp[2] < flat[2] - 15 && std::abs (lp[1] - flat[1]) < 1.0f, "master LP filter at 3 kHz cuts 12 kHz by " + juce::String (flat[2] - lp[2], 1) + " dB");
+        auto hmf = render ([&] { setp (M::hmfGain, 10); setp (M::hmfFreq, 1000); }, "hmf");
+        check (std::abs (hmf[1] - flat[1] - 10.0f) < 1.0f && std::abs (hmf[0] - flat[0]) < 1.0f, "HMF bell +10 dB at 1 kHz (" + juce::String (hmf[1] - flat[1], 1) + " dB)");
+        auto lfShelf = render ([&] { setp (M::lfGain, -12); setp (M::lfFreq, 150); }, "lf");
+        check (lfShelf[0] < flat[0] - 9 && std::abs (lfShelf[2] - flat[2]) < 0.5f, "LF shelf -12 dB (50 Hz " + juce::String (lfShelf[0] - flat[0], 1) + " dB)");
+        auto eqOff = render ([&] { setp (M::hmfGain, 10); setp (M::eqOn, 0); }, "eqoff");
+        check (std::abs (eqOff[1] - flat[1]) < 0.3f, "EQ In switch bypasses the EQ");
+        auto comp = render ([&] { setp (M::compRatio, 20); setp (M::compThresh, -24); }, "comp");
+        float grSeen = ms->grComp.exchange (0.0f);
+        check (grSeen > 3.0f, "compressor reduces gain (" + juce::String (grSeen, 1) + " dB GR at -24 dB / 20:1)");
+        check (comp[1] < flat[1] + 6.0f, "compressor with auto make-up stays controlled");
+        auto trim = render ([&] { setp (M::outGain, -6); }, "trim");
+        check (std::abs (trim[1] - flat[1] + 6.0f) < 0.2f, "output trim -6 dB");
+        auto cutR = render ([&] { setp (M::cut, 1); }, "cut");
+        check (cutR[1] < -100.0f, "CUT silences the master");
+        auto gate = render ([&] { setp (M::gateRange, 40); setp (M::gateThresh, -3); }, "gate");
+        check (gate[1] < flat[1] - 30, "gate closes below threshold (" + juce::String (gate[1] - flat[1], 1) + " dB)");
+        // saved with the project
+        setp (M::hfGain, 4.5f);
+        auto pf = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_ms.vegaproj");
+        m.saveProjectAs (pf);
+        DawSession m2 (engine); m2.openProject (pf);
+        auto* ms2 = m2.masterStrip (false);
+        int count = 0; for (auto* p : m2.edit().getMasterPluginList().getPlugins()) if (dynamic_cast<VegaMasterStripPlugin*> (p)) ++count;
+        check (ms2 != nullptr && count == 1 && std::abs (ms2->get (M::hfGain) - 4.5f) < 0.01f, "master strip settings restored, one instance");
+        pf.deleteFile(); tone.deleteFile();
+    }
     out.deleteFile(); proj.deleteFile();
     std::cout << (fails == 0 ? "ALL PASSED" : "FAILURES: " + std::to_string (fails)) << "\n";
     return fails == 0 ? 0 : 1;

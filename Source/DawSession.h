@@ -1,6 +1,7 @@
 #pragma once
 #include <tracktion_engine/tracktion_engine.h>
 #include "DJEQPlugin.h"
+#include "MasterStripPlugin.h"
 
 namespace te = tracktion;
 using namespace std::literals;
@@ -57,7 +58,8 @@ public:
     te::Plugin::Ptr addPlugin (te::AudioTrack&, const juce::String& type, const juce::PluginDescription* desc = nullptr, int index = -1);
     te::Plugin::Ptr setInstrument (te::AudioTrack&, const juce::String& type, const juce::PluginDescription* desc = nullptr);
     juce::Array<te::Plugin*> getInsertPlugins (te::AudioTrack&) const;
-    VegaDJEQPlugin* djEq (te::AudioTrack&, bool create = true);            // the channel's DJ EQ / filter (always present, sits before the fader)      // user plugins, excludes volume/meter/aux
+    VegaDJEQPlugin* djEq (te::AudioTrack&, bool create = true);
+    VegaMasterStripPlugin* masterStrip (bool create = true);               // EQ / dynamics on the master bus            // the channel's DJ EQ / filter (always present, sits before the fader)      // user plugins, excludes volume/meter/aux
     static juce::StringArray builtInEffectTypes();
     static juce::String builtInDisplayName (const juce::String& type);
 

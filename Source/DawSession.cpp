@@ -8,8 +8,19 @@ static const juce::Identifier busNumProp ("vegaBusNumber");
 DawSession::DawSession (te::Engine& e) : engine (e)
 {
     static std::set<te::Engine*> registered;   // built-in types must be registered once per engine, before any edit loads
-    if (registered.insert (&e).second) e.getPluginManager().createBuiltInType<VegaDJEQPlugin>();
+    if (registered.insert (&e).second) { e.getPluginManager().createBuiltInType<VegaDJEQPlugin>(); e.getPluginManager().createBuiltInType<VegaMasterStripPlugin>(); }
     newProject();
+}
+
+VegaMasterStripPlugin* DawSession::masterStrip (bool create)
+{
+    auto& list = editPtr->getMasterPluginList();
+    for (auto* p : list.getPlugins()) if (auto* m = dynamic_cast<VegaMasterStripPlugin*> (p)) return m;
+    if (! create) return nullptr;
+    auto p = editPtr->getPluginCache().createNewPlugin (VegaMasterStripPlugin::xmlTypeName, {});
+    if (p == nullptr) return nullptr;
+    list.insertPlugin (p, 0, nullptr);
+    return dynamic_cast<VegaMasterStripPlugin*> (p.get());
 }
 
 VegaDJEQPlugin* DawSession::djEq (te::AudioTrack& t, bool create)
@@ -36,6 +47,7 @@ void DawSession::attachEdit (std::unique_ptr<te::Edit> e)
     editPtr = std::move (e);
     editPtr->playInStopEnabled = true;
     for (auto* t : te::getAudioTracks (*editPtr)) djEq (*t);    // older projects get the DJ section too
+    masterStrip();
     editPtr->getTransport().ensureContextAllocated();
     if (onEditChanged) onEditChanged();
 }

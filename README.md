@@ -21,6 +21,19 @@ First run: **Options > Audio / MIDI settings** (pick ASIO / WASAPI on Windows, C
   - The LED lights, and the readout shows the cutoff, while it's engaged.
   - Double-click any knob to reset it.
 - **Pan** is the small slider under the knobs. Sends are in the channel's edit section (press **Mode**).
+- **Master section**: a full console channel strip on the master bus, in the order input → filters → EQ → gate → compressor → output.
+  - **Filters:** HP (16–500 Hz, 18 dB/oct) and LP (3–22 kHz).
+  - **4-band EQ** with an **EQ** in/out switch:
+    - **HF** (1.5–22 kHz, shelf or bell);
+    - **HMF** (0.6–7 kHz, with Q);
+    - **LMF** (0.2–2 kHz, with Q);
+    - **LF** (40–600 Hz, shelf or bell).
+  - **Compressor:** ratio 1:1 to ∞:1, threshold, release, fast attack, peak/RMS detection and automatic make-up gain.
+  - **Gate / expander:** range, threshold, release, hold, expand and fast attack.
+  - **Gain-reduction LEDs** for the compressor and the gate.
+  - **Input and output trims**, big output meters with peak hold, a polarity switch and **CUT**.
+  - **The master fader.**
+  - Everything is saved with the project. Double-click a knob to reset it.
 - **Each fader** has a scale and a level meter. Under the faders are two rows of lit pads: **Solo** and **Mute** (lit = playing).
 - **The left column** has:
   - a display showing the last control you touched;
