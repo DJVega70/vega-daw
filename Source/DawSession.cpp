@@ -46,6 +46,7 @@ void DawSession::attachEdit (std::unique_ptr<te::Edit> e)
 {
     if (editPtr) { if (onBeforeEditChange) onBeforeEditChange(); editPtr->getTransport().stop (false, true); }
     editPtr = std::move (e);
+    vegaFocusedEdit = editPtr.get();
     editPtr->playInStopEnabled = true;
     for (auto* t : te::getAudioTracks (*editPtr)) djEq (*t);    // older projects get the DJ section too
     masterStrip();

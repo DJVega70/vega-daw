@@ -394,6 +394,34 @@ int main()
         check (synth->setFrozen (false, te::Track::individualFreeze).wasOk() && ! synth->isFrozen (te::Track::individualFreeze), "unfreeze");
         o.deleteFile();
     }
+    {   // MIDI learn mapping: a CC moves the mapped parameter and the mapping is saved
+        DawSession ml (engine);
+        auto* t = ml.getTracks()[0];
+        auto* dj = ml.djEq (*t, false);
+        auto& pcm = ml.edit().getParameterControlMappings();
+        // the real learn flow: learn on -> touch a control on screen -> move a CC
+        engine.getMidiLearnState().setActive (true);
+        dj->filter->setParameter (0.2f, juce::sendNotificationSync);
+        pcm.sendChange (21, 0.5f, 1);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
+        engine.getMidiLearnState().setActive (false);
+        int ch = -1, cc = -1;
+        check (pcm.getParameterMapping (*dj->filter, ch, cc) && cc == 21, "MIDI learn maps CC 21 to the touched control (cc " + juce::String (cc) + ")");
+        pcm.sendChange (21, 1.0f, 1);
+        check (dj->filter->getCurrentValue() > 0.9f, "MIDI-learned CC 21 moves the DJ filter (" + juce::String (dj->filter->getCurrentValue(), 2) + ")");
+        pcm.sendChange (21, 0.0f, 1);
+        check (dj->filter->getCurrentValue() < -0.9f, "and back down");
+        check (vegaFocusedEdit == &ml.edit(), "controllers follow the open project");
+        auto pf = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_ml.vegaproj");
+        pcm.saveToEdit(); ml.saveProjectAs (pf);
+        DawSession ml2 (engine); ml2.openProject (pf);
+        auto& pcm2 = ml2.edit().getParameterControlMappings();
+        pcm2.loadFromEdit();
+        auto* dj2 = ml2.djEq (*ml2.getTracks()[0], false);
+        pcm2.sendChange (21, 1.0f, 1);
+        check (pcm2.getNumControllerIDs() >= 1 && dj2->filter->getCurrentValue() > 0.9f, "MIDI mappings saved with the project");
+        pf.deleteFile();
+    }
     out.deleteFile(); proj.deleteFile();
     std::cout << (fails == 0 ? "ALL PASSED" : "FAILURES: " + std::to_string (fails)) << "\n";
     return fails == 0 ? 0 : 1;

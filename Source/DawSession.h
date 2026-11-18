@@ -11,8 +11,13 @@ inline void runEngineTaskBlocking (te::ThreadPoolJobWithProgress& job)
 {
     while (job.runJob() == juce::ThreadPoolJob::jobNeedsRunningAgain) {}
 }
+/** The edit that hardware controllers / MIDI learn talk to (set whenever the session's edit changes) */
+inline te::Edit* vegaFocusedEdit = nullptr;
+
 struct HeadlessUIBehaviour : public te::UIBehaviour
 {
+    te::Edit* getCurrentlyFocusedEdit() override { return vegaFocusedEdit; }
+    te::Edit* getLastFocusedEdit() override { return vegaFocusedEdit; }
     void runTaskWithProgressBar (te::ThreadPoolJobWithProgress& j) override { runEngineTaskBlocking (j); }
 };
 

@@ -22,6 +22,9 @@ public:
         btn (rec, juce::String::fromUTF8 ("\xe2\x97\x8f"), juce::Colour (0xffe04848)); btn (loop, "LOOP"); btn (click, "CLICK"); btn (autoWrite, "WRITE", juce::Colour (0xffe8a23a));
         autoWrite.setTooltip ("Automation write: while playing, moving faders, pans, EQ and plug-in knobs records automation");
         autoWrite.onClick = [this] { auto& arm = vs.edit().getAutomationRecordManager(); arm.setWritingAutomation (! arm.isWritingAutomation()); };
+        btn (learn, "LEARN", juce::Colour (0xffb183f2));
+        learn.setTooltip ("MIDI learn: turn on, move a control on screen, then move a knob / fader on your controller. Turn off when done.");
+        learn.onClick = [this] { auto& ls = vs.edit().engine.getMidiLearnState(); ls.setActive (! ls.isActive()); repaint(); };
         btn (view, "MIXER"); btn (browse, "PLUGINS"); btn (addAudio, "+ AUDIO"); btn (addInst, "+ INSTRUMENT"); btn (addBus, "+ BUS");
         home.onClick = [this] { vs.edit().getTransport().setPosition (0s); };
         play.onClick = [this] { auto& t = vs.edit().getTransport(); if (t.isPlaying()) t.stop (false, false); else t.play (false); };
@@ -59,6 +62,13 @@ public:
         const double secs = tr.getPosition().inSeconds();
         g.setFont (VegaFonts::mono (13.0f)); g.setColour (VegaColours::textDim);
         g.drawText (juce::String::formatted ("%d:%02d.%03d", (int) secs / 60, (int) secs % 60, (int) (std::fmod (secs, 1.0) * 1000)), r.toNearestInt(), juce::Justification::centred);
+        if (vs.edit().engine.getMidiLearnState().isActive())
+        {
+            auto d = display.toFloat();
+            g.setColour (juce::Colour (0xee1a1424)); g.fillRoundedRectangle (d, 3.0f);
+            g.setColour (juce::Colour (0xffb183f2)); g.setFont (VegaFonts::ui (11.0f, true));
+            g.drawFittedText ("MIDI LEARN: move a control here,\nthen a knob on your controller", d.toNearestInt().reduced (6, 2), juce::Justification::centred, 2);
+        }
         g.setColour (VegaColours::textDim); g.setFont (VegaFonts::ui (9.5f, true));
         const float cpu = (float) vs.edit().engine.getDeviceManager().getCpuUsage();
         g.drawText ("CPU", cpuArea.withHeight (12), juce::Justification::centredLeft);
@@ -71,7 +81,7 @@ public:
     {
         int x = 8; const int y = 8, h = getHeight() - 16;
         for (auto* b : { &home, &play, &stop, &rec }) { b->setBounds (x, y, 40, h); x += 44; }
-        loop.setBounds (x + 6, y, 58, h); x += 70; click.setBounds (x, y, 60, h); x += 66; autoWrite.setBounds (x, y, 62, h); x += 72;
+        loop.setBounds (x + 6, y, 58, h); x += 70; click.setBounds (x, y, 60, h); x += 66; autoWrite.setBounds (x, y, 62, h); x += 66; learn.setBounds (x, y, 60, h); x += 70;
         display = { x, y - 2, 260, h + 4 }; x += 270;
         tempo.setBounds (x, y, 110, h); x += 116; sig.setBounds (x, y, 70, h); x += 76; snap.setBounds (x, y, 112, h); x += 120;
         cpuArea = { x + 4, y, 60, h }; x += 74;
@@ -98,12 +108,14 @@ private:
         loop.setToggleState (tr.looping.get(), juce::dontSendNotification);
         click.setToggleState (vs.edit().clickTrackEnabled.get(), juce::dontSendNotification);
         autoWrite.setToggleState (vs.edit().getAutomationRecordManager().isWritingAutomation(), juce::dontSendNotification);
+        const bool learning = vs.edit().engine.getMidiLearnState().isActive();
+        if (learn.getToggleState() != learning) { learn.setToggleState (learning, juce::dontSendNotification); repaint(); }
         if (! tempo.isMouseButtonDown() && ! tempo.hasKeyboardFocus (true)) tempo.setValue (vs.session.getTempo(), juce::dontSendNotification);
         if (barSnap) vs.snapDiv = 0;
         repaint (display); repaint (cpuArea);
     }
     ViewState& vs;
-    juce::TextButton home, play, stop, rec, loop, click, view, addAudio, addInst, addBus, browse, autoWrite;
+    juce::TextButton home, play, stop, rec, loop, click, view, addAudio, addInst, addBus, browse, autoWrite, learn;
     juce::Slider tempo; juce::ComboBox sig, snap;
     juce::Rectangle<int> display, cpuArea;
 };
@@ -223,6 +235,7 @@ public:
         else if (idx == 3)
         {
             m.addItem (40, "Audio / MIDI settings..."); m.addItem (41, "Scan for new plug-ins"); m.addItem (45, "Advanced plug-in list...");
+            m.addItem (46, "MIDI learn mappings...");
             m.addItem (44, juce::String ("Controllers (FLkey 2 / HUI)...") + (hub.isConnected() ? "   - connected" : ""));
             m.addItem (42, "Metronome", true, session.edit().clickTrackEnabled.get());
             m.addItem (43, "Follow playhead", true, vs.followPlayhead);
@@ -260,6 +273,7 @@ public:
             case 40: showAudioSettings(); break;
             case 41: showBrowser (true); browser.startScan (false); break;
             case 45: showPluginList(); break;
+            case 46: showMappings(); break;
             case 36: showBrowser (! browser.isVisible()); break;
             case 37: if (auto* t = vs.getSelectedTrack()) { auto* f = t->pluginList[0]; if (f != nullptr && f->isSynth()) dawui::openPlugin (f); else dawui::pluginChainMenu (session, *t, &transport); } break;
             case 38: if (auto* t = vs.getSelectedTrack()) dawui::pluginChainMenu (session, *t, &transport, [this] { mixer.rebuild(); }); break;
@@ -408,6 +422,27 @@ private:
         arrange.rebuildHeaders(); mixer.rebuild();
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Separate stems",
             juce::String (tracks.size()) + " stem tracks added" + (clip != nullptr ? " (the original clip is muted)." : ".") + "\n\nThe WAV files are in:\n" + outDir.getFullPathName());
+    }
+
+    void showMappings()
+    {
+        auto& pcm = session.edit().getParameterControlMappings();
+        juce::PopupMenu m;
+        m.addSectionHeader ("MIDI learn mappings (click one to remove it)");
+        int rows = 0;
+        for (int i = 0; i < pcm.getNumControllerIDs(); ++i)
+        {
+            auto mp = pcm.getMappingForRow (i);
+            if (mp.parameter == nullptr) continue;
+            auto txt = pcm.getTextForRow (i);
+            m.addItem (1 + i, txt.first + "   ->   " + mp.parameter->getFullName());
+            ++rows;
+        }
+        if (rows == 0) m.addItem (-1, "No mappings yet - press LEARN in the transport bar", false);
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&transport), [this] (int r)
+        {
+            if (r >= 1) session.edit().getParameterControlMappings().removeMapping (r - 1);
+        });
     }
 
     void showBrowser (bool show) { browser.setVisible (show); transport.setBrowserShown (show); resized(); }

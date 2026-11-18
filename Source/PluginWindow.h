@@ -231,6 +231,10 @@ class ExtendedUIBehaviour : public te::UIBehaviour
 public:
     ExtendedUIBehaviour() = default;
 
+    // MIDI controller messages and MIDI learn go to the project that's open
+    te::Edit* getCurrentlyFocusedEdit() override { return vegaFocusedEdit; }
+    te::Edit* getLastFocusedEdit() override { return vegaFocusedEdit; }
+
     std::unique_ptr<Component> createPluginWindow (te::PluginWindowState& pws) override
     {
         if (auto ws = dynamic_cast<te::Plugin::WindowState*> (&pws))
