@@ -1195,11 +1195,11 @@ private:
         g.setGradientFill (juce::ColourGradient (juce::Colour (0x66ffe6b0), face.getCentreX(), face.getBottom(), juce::Colour (0x00ffe6b0), face.getCentreX(), face.getY(), false));
         g.fillRoundedRectangle (face, 2.0f);                                           // warm lamp glow at the bottom
         const juce::Point<float> pivot (face.getCentreX(), face.getBottom() + face.getHeight() * 0.55f);
-        const float rad = face.getHeight() * 1.18f;
+        const float rad = face.getHeight() * 1.04f;
         auto angleFor = [] (float v)
         {   // classic VU scale: -20 .. +3 spread over about 96 degrees, non-linear
             const float n = std::pow (juce::Decibels::decibelsToGain (juce::jlimit (-20.0f, 3.0f, v)) / juce::Decibels::decibelsToGain (3.0f), 0.85f);
-            return juce::degreesToRadians (-48.0f + 96.0f * n);
+            return juce::degreesToRadians (-40.0f + 80.0f * n);       // keeps the whole scale inside the face
         };
         // scale arcs
         juce::Path arc; arc.addCentredArc (pivot.x, pivot.y, rad, rad, 0, angleFor (-20), angleFor (0), true);
@@ -1210,7 +1210,7 @@ private:
         for (float m : { -20.0f, -10.0f, -7.0f, -5.0f, -3.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f })
         {
             const float a = angleFor (m);
-            const auto p1 = pivot.getPointOnCircumference (rad, a), p2 = pivot.getPointOnCircumference (rad + 6, a), pl = pivot.getPointOnCircumference (rad + 14, a);
+            const auto p1 = pivot.getPointOnCircumference (rad, a), p2 = pivot.getPointOnCircumference (rad + 6, a), pl = pivot.getPointOnCircumference (rad + 13, a);
             g.setColour (m > 0 ? juce::Colour (0xffc02a2a) : juce::Colour (0xff1b2340));
             g.drawLine ({ p1, p2 }, 1.2f);
             g.drawText (juce::String ((int) std::abs (m)), juce::Rectangle<float> (16, 10).withCentre (pl), juce::Justification::centred);
