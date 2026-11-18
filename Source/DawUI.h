@@ -79,6 +79,36 @@ inline void choosePlugin (te::Engine& engine, bool instruments, juce::Component*
     });
 }
 
+/** Record arm: true when an input feeding this track is armed */
+inline bool isArmed (te::AudioTrack& t)
+{
+    for (auto* in : t.edit.getAllInputDevices())
+        if (te::isOnTargetTrack (*in, t, 0) && in->isRecordingEnabled (t.itemID)) return true;
+    return false;
+}
+/** Toggle record arm, giving the track a default input first if it has none */
+inline void toggleArm (te::AudioTrack& t)
+{
+    bool has = false;
+    for (auto* in : t.edit.getAllInputDevices()) if (te::isOnTargetTrack (*in, t, 0)) has = true;
+    if (! has)
+    {
+        const bool midi = DawSession::kindOf (t) == DawSession::TrackKind::midi;
+        for (auto* in : t.edit.getAllInputDevices())
+        {
+            const auto type = in->getInputDevice().getDeviceType();
+            if (midi ? type == te::InputDevice::physicalMidiDevice : type == te::InputDevice::waveDevice)
+            {
+                [[maybe_unused]] auto r = in->setTarget (t.itemID, ! midi, &t.edit.getUndoManager(), 0);
+                if (! midi) break;
+            }
+        }
+    }
+    const bool now = ! isArmed (t);
+    for (auto* in : t.edit.getAllInputDevices())
+        if (te::isOnTargetTrack (*in, t, 0)) in->setRecordingEnabled (t.itemID, now);
+}
+
 /** Open a plug-in's window and bring it to the front */
 inline void openPlugin (te::Plugin* p)
 {

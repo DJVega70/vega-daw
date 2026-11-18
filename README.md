@@ -11,6 +11,21 @@ A digital audio workstation for the Vega Productions suite — built on the open
 
 First run: **Options > Audio / MIDI settings** (pick ASIO / WASAPI on Windows, CoreAudio on Mac, and enable your MIDI keyboard), then open the **PLUGINS** panel (button at the top right, or press **B**). The DAW scans your standard VST3 folder (and AU on Mac) by itself on first launch and picks up newly installed plug-ins every time it starts. Use **FOLDERS** if you keep .vst3 files somewhere else.
 
+**Mixer (Tab)**, styled after a Launch Control XL:
+- **Each channel** has:
+  - three knob rows: Send A (pink), Send B (blue) and Pan (green), each with an LED that lights when the knob is in use;
+  - a long-throw fader with a scale and a level meter;
+  - two rows of lit pads: **Solo** (top) and **Mute** (bottom, lit = playing).
+- **The left column** has:
+  - a display showing the last control you touched;
+  - **Page ▲▼** to move 8 channels at a time;
+  - **Track ◀▶** to select the previous or next track;
+  - **Record / Play**;
+  - **Shift**, which turns the pads into **Arm / Select**;
+  - **Mode**, which shows or hides each channel's instrument and insert section.
+
+![mixer](docs/mixer.png)
+
 **Using plug-ins**
 - **Load:** in the PLUGINS panel, double-click a plug-in or drag it onto a track or mixer strip. Its window opens right away. An instrument goes on the selected instrument track, or on a new one. An effect goes on the selected track.
 - **Reopen:** every track header has an **INST** button that opens its instrument and an **FX** button that lists every plug-in on the track; click one to open it. In the mixer, click the instrument name or an insert slot.
