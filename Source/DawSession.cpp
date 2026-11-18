@@ -52,6 +52,9 @@ void DawSession::attachEdit (std::unique_ptr<te::Edit> e)
     editPtr->playInStopEnabled = true;
     for (auto* t : te::getAudioTracks (*editPtr)) djEq (*t);    // older projects get the DJ section too
     masterStrip();
+    for (auto* t : te::getAudioTracks (*editPtr))          // elastic clips play in real time (the proxy setting isn't saved)
+        for (auto* c : t->getClips())
+            if (auto* ac = dynamic_cast<te::WaveAudioClip*> (c); ac != nullptr && ac->getWarpTime()) ac->setUsesProxy (false);
     editPtr->getTransport().ensureContextAllocated();
     if (onEditChanged) onEditChanged();
 }
@@ -441,4 +444,26 @@ juce::Array<te::AudioTrack*> DawSession::placeStems (const juce::Array<juce::Fil
     }
     if (original != nullptr && ! made.isEmpty()) original->setMuted (true);
     return made;
+}
+
+void DawSession::setElastic (te::WaveAudioClip& ac, bool on)
+{
+    if (! on) { ac.setWarpTime (false); ac.setUsesProxy (true); return; }
+    ac.setUsesProxy (false);      // warp markers are applied by real-time playback, not the pre-rendered proxy
+    auto& li = ac.getLoopInfo();
+    if (li.getNumBeats() <= 0 || li.getBpm (ac.getWaveInfo()) <= 0)
+    {
+        auto pos = te::createPosition (ac.edit.tempoSequence);
+        pos.set (ac.getPosition().getStart());
+        li.setBpm (pos.getTempo(), ac.getWaveInfo());
+    }
+    setClipWarp (ac, true, ac.getPitchChange());
+    ac.setWarpTime (true);
+    auto& wtm = ac.getWarpTimeManager();     // Tracktion creates the start / end markers itself
+    if (wtm.getMarkers().isEmpty())
+    {
+        const auto len = wtm.getSourceLength();
+        wtm.insertMarker (te::WarpMarker (te::TimePosition(), te::TimePosition()));
+        wtm.insertMarker (te::WarpMarker (te::TimePosition() + len, te::TimePosition() + len));
+    }
 }

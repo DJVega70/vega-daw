@@ -76,6 +76,9 @@ public:
     int sliceAtTransients (te::WaveAudioClip&, float sensitivity = 0.5f);    // splits the clip at detected hits, returns number of new clips
     static void setClipFades (te::AudioClipBase&, te::TimeDuration fadeIn, te::TimeDuration fadeOut);
     static void setClipWarp (te::WaveAudioClip&, bool followTempo, float semitones);   // time-stretch + pitch (SoundTouch)
+    /** Elastic audio: warp markers (start / end markers are created). Turns on tempo-follow, since warp maps
+        are applied by the tempo-synced playback path; an untagged file is treated as being at the project tempo. */
+    static void setElastic (te::WaveAudioClip&, bool on);
     /** Put separated stems on new audio tracks, lined up with the clip they came from (or at 'at' for a whole file).
         Returns the new tracks. The original clip (if any) is muted. */
     juce::Array<te::AudioTrack*> placeStems (const juce::Array<juce::File>& stems, const juce::StringArray& names, const juce::String& baseName,

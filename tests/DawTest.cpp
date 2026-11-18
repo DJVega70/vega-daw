@@ -440,6 +440,36 @@ int main()
         }
         ecm.detachFromEdit (&mc.edit());
     }
+    {   // warp markers: moving a marker moves the audio in time
+        DawSession wp (engine);
+        auto f = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_warp_click.wav");
+        {
+            f.deleteFile(); juce::WavAudioFormat wav;
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (f), 48000.0, 2, 24, {}, 0));
+            juce::AudioBuffer<float> b (2, 48000 * 4); b.clear();
+            for (int i = 0; i < 2400; ++i) { const float v = 0.8f * std::exp (-i / 300.0f) * (float) std::sin (2 * juce::MathConstants<double>::pi * 1000 * i / 48000.0); b.setSample (0, 48000 + i, v); b.setSample (1, 48000 + i, v); }
+            w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+        }
+        auto clip = wp.insertAudioFile (*wp.getTracks()[0], f, te::TimePosition());
+        DawSession::setElastic (*clip, true);
+        check (clip->getWarpTime() && clip->getWarpTimeManager().getMarkers().size() == 2, "elastic audio adds start / end warp markers");
+        auto& wtm = clip->getWarpTimeManager();
+        const auto len = wtm.getSourceLength();
+        const int mid = wtm.insertMarker (te::WarpMarker (te::TimePosition::fromSeconds (1.0), te::TimePosition::fromSeconds (1.0)));
+        wtm.moveMarker (mid, te::TimePosition::fromSeconds (1.5));        // the hit at 1.0 s should now play at 1.5 s
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (1500);
+        auto o = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_warp.wav");
+        wp.exportWav (o, te::TimeRange (te::TimePosition(), te::TimePosition::fromSeconds (3.0)));
+        std::unique_ptr<juce::AudioFormatReader> r (engine.getAudioFileFormatManager().readFormatManager.createReaderFor (o));
+        double peakAt = -1;
+        if (r != nullptr)
+        {
+            juce::AudioBuffer<float> b (1, (int) r->lengthInSamples); r->read (&b, 0, b.getNumSamples(), 0, true, false);
+            float best = 0; for (int i = 0; i < b.getNumSamples(); ++i) if (std::abs (b.getSample (0, i)) > best) { best = std::abs (b.getSample (0, i)); peakAt = i / r->sampleRate; }
+        }
+        check (wtm.getMarkers().size() == 3 && std::abs (peakAt - 1.5) < 0.12, "dragging a warp marker moves the hit from 1.0 s to " + juce::String (peakAt, 2) + " s");
+        o.deleteFile(); f.deleteFile();
+    }
     out.deleteFile(); proj.deleteFile();
     std::cout << (fails == 0 ? "ALL PASSED" : "FAILURES: " + std::to_string (fails)) << "\n";
     return fails == 0 ? 0 : 1;

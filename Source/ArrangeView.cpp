@@ -342,6 +342,39 @@ public:
         g.setColour (VegaColours::gold); g.fillRect (px - 0.5f, 0.0f, 1.5f, (float) getHeight());
     }
 
+    // ---------------------------------------------------------------- warp markers (elastic audio)
+    /** (sourceTime, warpTime) pairs in seconds, sorted by warp time */
+    static std::vector<std::pair<double, double>> warpMarkers (te::WaveAudioClip& ac)
+    {
+        std::vector<std::pair<double, double>> m;
+        for (auto* wm : ac.getWarpTimeManager().getMarkers()) m.push_back ({ wm->sourceTime.inSeconds(), wm->warpTime.inSeconds() });
+        std::sort (m.begin(), m.end(), [] (auto& a, auto& b) { return a.second < b.second; });
+        return m;
+    }
+    float warpToX (te::WaveAudioClip& ac, double warpSecs) const
+    {
+        const auto pos = ac.getPosition();
+        return vs.beatToX (vs.timeToBeats (pos.getStart() + te::TimeDuration::fromSeconds (warpSecs - pos.getOffset().inSeconds())), 0);
+    }
+    double xToWarp (te::WaveAudioClip& ac, float x) const
+    {
+        const auto pos = ac.getPosition();
+        return (vs.beatsToTime (vs.xToBeat (x, 0)) - pos.getStart()).inSeconds() + pos.getOffset().inSeconds();
+    }
+    static void enableWarpMarkers (te::WaveAudioClip& ac, bool on) { DawSession::setElastic (ac, on); }
+    int warpMarkerAt (te::WaveAudioClip& ac, float x) const
+    {
+        int best = -1; float bestD = 6.0f;
+        auto& list = ac.getWarpTimeManager().getMarkers();
+        for (int i = 0; i < list.size(); ++i)
+        {
+            const float d = std::abs (warpToX (ac, list[i]->warpTime.inSeconds()) - x);
+            if (d < bestD) { bestD = d; best = i; }
+        }
+        return best;
+    }
+    te::EditItemID warpDragClip; int warpDragIndex = -1;
+
     void drawClip (juce::Graphics& g, te::Clip& c, int rowY, int rowH)
     {
         const auto pos = c.getPosition();
@@ -362,17 +395,39 @@ public:
             const auto srcStart = ac->getPosition().getOffset().inSeconds() * ac->getSpeedRatio();
             const auto srcLen = pos.getLength().inSeconds() * ac->getSpeedRatio();
             g.setColour (col);
-            th.drawChannels (g, r.toNearestInt(), { te::TimePosition::fromSeconds (srcStart), te::TimePosition::fromSeconds (srcStart + srcLen) }, juce::Decibels::decibelsToGain (ac->getGainDB()));
+            if (ac->getWarpTime())
+            {   // elastic audio: draw each segment between warp markers stretched to its warped length
+                auto markers = warpMarkers (*ac);
+                for (size_t i = 0; i + 1 < markers.size(); ++i)
+                {
+                    const float wx0 = warpToX (*ac, markers[i].second), wx1 = warpToX (*ac, markers[i + 1].second);
+                    if (wx1 - wx0 < 1.0f) continue;
+                    th.drawChannels (g, juce::Rectangle<float> (wx0, r.getY(), wx1 - wx0, r.getHeight()).toNearestInt(),
+                                     { te::TimePosition::fromSeconds (markers[i].first), te::TimePosition::fromSeconds (markers[i + 1].first) }, juce::Decibels::decibelsToGain (ac->getGainDB()));
+                }
+                for (size_t i = 0; i < markers.size(); ++i)
+                {
+                    const float mx = warpToX (*ac, markers[i].second);
+                    const bool hot = warpDragClip == ac->itemID && warpDragIndex == (int) i;
+                    g.setColour (hot ? juce::Colours::white : VegaColours::gold);
+                    g.drawVerticalLine ((int) mx, r.getY(), r.getBottom());
+                    juce::Path tri; tri.addTriangle (mx - 5, r.getY(), mx + 5, r.getY(), mx, r.getY() + 7);
+                    g.fillPath (tri);
+                }
+                g.setColour (col);
+            }
+            else
+                th.drawChannels (g, r.toNearestInt(), { te::TimePosition::fromSeconds (srcStart), te::TimePosition::fromSeconds (srcStart + srcLen) }, juce::Decibels::decibelsToGain (ac->getGainDB()));
             // fades
             const float fi = (float) (ac->getFadeIn().inSeconds() / pos.getLength().inSeconds()) * r.getWidth();
             const float fo = (float) (ac->getFadeOut().inSeconds() / pos.getLength().inSeconds()) * r.getWidth();
             g.setColour (juce::Colours::white.withAlpha (0.8f));
             if (fi > 1) g.drawLine (r.getX(), r.getBottom(), r.getX() + fi, r.getY(), 1.2f);
             if (fo > 1) g.drawLine (r.getRight() - fo, r.getY(), r.getRight(), r.getBottom(), 1.2f);
-            if (ac->getAutoTempo() || std::abs (ac->getPitchChange()) > 0.01f)
+            if (ac->getAutoTempo() || ac->getWarpTime() || std::abs (ac->getPitchChange()) > 0.01f)
             {
                 g.setFont (VegaFonts::ui (9.5f, true)); g.setColour (VegaColours::gold);
-                juce::String tag; if (ac->getAutoTempo()) tag << "WARP "; if (std::abs (ac->getPitchChange()) > 0.01f) tag << juce::String (ac->getPitchChange(), 1) << " st";
+                juce::String tag; if (ac->getAutoTempo()) tag << "WARP "; if (ac->getWarpTime()) tag << "ELASTIC "; if (std::abs (ac->getPitchChange()) > 0.01f) tag << juce::String (ac->getPitchChange(), 1) << " st";
                 g.drawText (tag, r.reduced (4, 2).toNearestInt(), juce::Justification::topRight);
             }
         }
@@ -567,9 +622,22 @@ public:
     void mouseDown (const juce::MouseEvent& e) override
     {
         owner.grabKeyboardFocus();
-        autoParam = nullptr; autoPoint = -1;
+        autoParam = nullptr; autoPoint = -1; warpDragIndex = -1;
         if (laneMouseDown (e)) return;
         const auto h = hitTest (e.position);
+        if (auto* wc = dynamic_cast<te::WaveAudioClip*> (h.clip); wc != nullptr && wc->getWarpTime() && ! e.mods.isPopupMenu() && h.zone == Drag::move)
+        {
+            vs.selectClip (wc);
+            int idx = warpMarkerAt (*wc, e.position.x);
+            if (idx < 0 && e.mods.isCommandDown())
+            {   // Ctrl / Cmd-click: new warp marker here
+                auto& wtm = wc->getWarpTimeManager();
+                const auto wt = te::TimePosition::fromSeconds (xToWarp (*wc, e.position.x));
+                vs.edit().getUndoManager().beginNewTransaction ("Add warp marker");
+                idx = wtm.insertMarker (te::WarpMarker (wtm.warpTimeToSourceTime (wt), wt));
+            }
+            if (idx >= 0) { warpDragClip = wc->itemID; warpDragIndex = idx; drag = Drag::none; repaint(); return; }
+        }
         drag = h.zone; dragged = false;
         if (h.clip != nullptr)
         {
@@ -596,6 +664,26 @@ public:
     void mouseDrag (const juce::MouseEvent& e) override
     {
         if (autoParam != nullptr) { laneMouseDrag (e); return; }
+        if (warpDragIndex >= 0)
+        {
+            if (auto* wc = dynamic_cast<te::WaveAudioClip*> (vs.getSelectedClip()); wc != nullptr && wc->itemID == warpDragClip)
+            {
+                auto& wtm = wc->getWarpTimeManager();
+                auto& list = wtm.getMarkers();
+                if (warpDragIndex < list.size())
+                {
+                    // keep it between its neighbours
+                    double lo = -1.0e9, hi = 1.0e9; const double cur = list[warpDragIndex]->warpTime.inSeconds();
+                    for (auto* m : list) { const double w = m->warpTime.inSeconds(); if (w < cur - 1.0e-6) lo = std::max (lo, w); if (w > cur + 1.0e-6) hi = std::min (hi, w); }
+                    double nw = xToWarp (*wc, e.position.x);
+                    if (! e.mods.isShiftDown()) nw = (vs.beatsToTime (vs.snapBeat (vs.xToBeat (e.position.x, 0))) - wc->getPosition().getStart()).inSeconds() + wc->getPosition().getOffset().inSeconds();
+                    nw = juce::jlimit (lo + 0.01, hi - 0.01, nw);
+                    wtm.moveMarker (warpDragIndex, te::TimePosition::fromSeconds (nw));
+                    repaint();
+                }
+            }
+            return;
+        }
         auto* c = vs.getSelectedClip();
         if (c == nullptr || drag == Drag::none) return;
         if (! dragged && e.getDistanceFromDragStart() < 3) return;
@@ -654,9 +742,15 @@ public:
         }
         owner.repaint();
     }
-    void mouseUp (const juce::MouseEvent&) override { drag = Drag::none; autoParam = nullptr; repaint(); }
+    void mouseUp (const juce::MouseEvent&) override { drag = Drag::none; autoParam = nullptr; warpDragIndex = -1; repaint(); }
     void mouseDoubleClick (const juce::MouseEvent& e) override
     {
+        if (auto* wc = dynamic_cast<te::WaveAudioClip*> (hitTest (e.position).clip); wc != nullptr && wc->getWarpTime())
+        {   // double-click a warp marker (not the first / last) to remove it
+            const int idx = warpMarkerAt (*wc, e.position.x);
+            auto& list = wc->getWarpTimeManager().getMarkers();
+            if (idx > 0 && idx < list.size() - 1) { wc->getWarpTimeManager().removeMarker (idx); warpDragIndex = -1; repaint(); return; }
+        }
         if (auto lh = laneHit (e.position); lh.track != nullptr)
         {   // double-click a point to delete it
             if (lh.point >= 0) lh.param->getCurve().removePoint (lh.point, &vs.edit().getUndoManager());
@@ -699,6 +793,7 @@ public:
             m.addSubMenu ("Clip gain", gain);
             m.addItem (13, "Slice at transients (new clips)");
             m.addSeparator();
+            m.addItem (15, "Elastic audio (warp markers)", true, ac->getWarpTime());
             m.addItem (14, "Separate stems (AI)...");
         }
         else if (auto* mc = dynamic_cast<te::MidiClip*> (&c))
@@ -729,6 +824,7 @@ public:
             else if (ac != nullptr && r >= 188 && r <= 224) ac->setGainDB ((float) (r - 212));
             else if (ac != nullptr && r == 13) owner.vs.session.sliceAtTransients (*ac);
             else if (ac != nullptr && r == 14 && vs.onSeparateClip) vs.onSeparateClip (ac);
+            else if (ac != nullptr && r == 15) enableWarpMarkers (*ac, ! ac->getWarpTime());
             else if (r == 20 && vs.onOpenPianoRoll) vs.onOpenPianoRoll();
             else if (r == 21) if (auto* mc = dynamic_cast<te::MidiClip*> (c)) quantise (*mc);
             owner.repaint();
