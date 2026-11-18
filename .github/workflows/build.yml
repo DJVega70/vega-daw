@@ -72,6 +72,7 @@ jobs:
 
   macos:
     name: macOS app (Universal)
+    if: false   # Mac build switched off (no Mac in the studio right now) - delete this line to turn it back on
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
