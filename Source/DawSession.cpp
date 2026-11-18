@@ -1,10 +1,29 @@
+#include <set>
 #include "DawSession.h"
 
 static const juce::Identifier kindProp ("vegaKind");
 static const juce::Identifier colourProp ("vegaColour");
 static const juce::Identifier busNumProp ("vegaBusNumber");
 
-DawSession::DawSession (te::Engine& e) : engine (e) { newProject(); }
+DawSession::DawSession (te::Engine& e) : engine (e)
+{
+    static std::set<te::Engine*> registered;   // built-in types must be registered once per engine, before any edit loads
+    if (registered.insert (&e).second) e.getPluginManager().createBuiltInType<VegaDJEQPlugin>();
+    newProject();
+}
+
+VegaDJEQPlugin* DawSession::djEq (te::AudioTrack& t, bool create)
+{
+    for (auto* p : t.pluginList.getPlugins()) if (auto* d = dynamic_cast<VegaDJEQPlugin*> (p)) return d;
+    if (! create) return nullptr;
+    auto p = editPtr->getPluginCache().createNewPlugin (VegaDJEQPlugin::xmlTypeName, {});
+    if (p == nullptr) return nullptr;
+    int index = t.pluginList.size();
+    for (int i = 0; i < t.pluginList.size(); ++i)
+        if (dynamic_cast<te::VolumeAndPanPlugin*> (t.pluginList[i]) != nullptr) { index = i; break; }
+    t.pluginList.insertPlugin (p, index, nullptr);
+    return dynamic_cast<VegaDJEQPlugin*> (p.get());
+}
 DawSession::~DawSession()
 {
     if (editPtr) editPtr->getTransport().stop (false, true);
@@ -16,6 +35,7 @@ void DawSession::attachEdit (std::unique_ptr<te::Edit> e)
     if (editPtr) { if (onBeforeEditChange) onBeforeEditChange(); editPtr->getTransport().stop (false, true); }
     editPtr = std::move (e);
     editPtr->playInStopEnabled = true;
+    for (auto* t : te::getAudioTracks (*editPtr)) djEq (*t);    // older projects get the DJ section too
     editPtr->getTransport().ensureContextAllocated();
     if (onEditChanged) onEditChanged();
 }
@@ -85,6 +105,7 @@ te::AudioTrack* DawSession::addTrack (TrackKind kind, const juce::String& name)
     t->setName (name.isNotEmpty() ? name : kindName + " " + juce::String (count));
     t->state.setProperty (kindProp, kind == TrackKind::bus ? "bus" : kind == TrackKind::midi ? "midi" : "audio", nullptr);
     t->state.setProperty (colourProp, juce::Colour (palette[(size_t) (existing.size() % 8)]).toString(), nullptr);
+    djEq (*t);
     if (kind == TrackKind::midi) { setInstrument (*t, te::FourOscPlugin::xmlTypeName); if (auto vp = t->getVolumePlugin()) vp->setVolumeDb (-10.0f); }
     if (kind == TrackKind::bus)
     {
@@ -198,7 +219,7 @@ te::Plugin::Ptr DawSession::addPlugin (te::AudioTrack& t, const juce::String& ty
     {   // inserts go before the volume/pan fader
         index = t.pluginList.size();
         for (int i = 0; i < t.pluginList.size(); ++i)
-            if (dynamic_cast<te::VolumeAndPanPlugin*> (t.pluginList[i]) != nullptr) { index = i; break; }
+            if (dynamic_cast<te::VolumeAndPanPlugin*> (t.pluginList[i]) != nullptr || dynamic_cast<VegaDJEQPlugin*> (t.pluginList[i]) != nullptr) { index = i; break; }
     }
     t.pluginList.insertPlugin (p, index, nullptr);
     return p;
@@ -217,7 +238,7 @@ juce::Array<te::Plugin*> DawSession::getInsertPlugins (te::AudioTrack& t) const
     for (auto* p : t.pluginList.getPlugins())
     {
         if (dynamic_cast<te::VolumeAndPanPlugin*> (p) || dynamic_cast<te::LevelMeterPlugin*> (p)
-            || dynamic_cast<te::AuxSendPlugin*> (p) || dynamic_cast<te::AuxReturnPlugin*> (p)) continue;
+            || dynamic_cast<te::AuxSendPlugin*> (p) || dynamic_cast<te::AuxReturnPlugin*> (p) || dynamic_cast<VegaDJEQPlugin*> (p)) continue;
         r.add (p);
     }
     return r;

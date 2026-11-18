@@ -5,7 +5,7 @@
 namespace xl
 {
 const juce::Colour face { 0xff1d1d1f }, faceLight { 0xff242427 }, keyFace { 0xff202023 }, keyEdge { 0xff38383c }, slot { 0xff0a0a0b };
-const juce::Colour rowLed[3] { juce::Colour (0xffe35ce8), juce::Colour (0xff1ea9ee), juce::Colour (0xff17dca2) };
+const juce::Colour rowLed[4] { juce::Colour (0xffe35ce8), juce::Colour (0xff1ea9ee), juce::Colour (0xff17dca2), juce::Colour (0xffffb23a) };
 // pad LED colours run pink -> violet -> blue -> cyan -> green across the channels, like the hardware
 inline juce::Colour columnColour (int i)
 {
@@ -89,6 +89,32 @@ public:
     }
 };
 
+/** Compact horizontal pan control: slot with a centre notch and a small cap */
+class PanBar : public juce::Slider
+{
+public:
+    PanBar() : juce::Slider (juce::Slider::LinearHorizontal, juce::Slider::NoTextBox)
+    {
+        setRange (-1.0, 1.0, 0.01); setDoubleClickReturnValue (true, 0.0);
+        setSliderSnapsToMousePosition (false); setPopupDisplayEnabled (true, true, nullptr);
+        textFromValueFunction = [] (double v) { return std::abs (v) < 0.01 ? juce::String ("Pan C") : "Pan " + juce::String (juce::roundToInt (std::abs (v) * 100)) + (v < 0 ? " L" : " R"); };
+    }
+    void paint (juce::Graphics& g) override
+    {
+        const float cy = getHeight() * 0.5f;
+        auto slotR = juce::Rectangle<float> (8.0f, cy - 2.0f, getWidth() - 16.0f, 4.0f);
+        g.setColour (slot); g.fillRoundedRectangle (slotR, 2.0f);
+        g.setColour (juce::Colour (0xff8a8a8a)); g.fillRect (getWidth() * 0.5f - 0.5f, cy - 6.0f, 1.0f, 12.0f);
+        const float x = (float) getPositionOfValue (getValue());
+        const float cx = getWidth() * 0.5f;
+        g.setColour (rowLed[2].withAlpha (0.7f)); g.fillRect (juce::Rectangle<float> (std::min (x, cx), cy - 1.0f, std::abs (x - cx), 2.0f));
+        auto cap = juce::Rectangle<float> (12.0f, 14.0f).withCentre ({ x, cy });
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff4a4a4e), 0, cap.getY(), juce::Colour (0xff252528), 0, cap.getBottom(), false));
+        g.fillRoundedRectangle (cap, 2.5f);
+        g.setColour (juce::Colour (0xffe6e6e6)); g.fillRect (x - 0.75f, cap.getY() + 3, 1.5f, cap.getHeight() - 6);
+    }
+};
+
 /** Pad with an LED strip: dim when off, glowing when on */
 class Pad : public juce::Button
 {
@@ -153,7 +179,7 @@ public:
 //==============================================================================
 namespace mixlayout
 {
-constexpr int padH = 36, padGap = 10, bottom = 8, knobRowH = 66, headerH = 30;
+constexpr int padH = 36, padGap = 10, bottom = 8, knobRowH = 64, headerH = 30, numKnobs = 4;
 inline int padY (int h, int row) { return h - bottom - padH - (1 - row) * (padH + padGap); }   // row 0 = Solo/Arm, row 1 = Mute/Select
 }
 
@@ -168,15 +194,35 @@ public:
         fader.setRange (-60.0, 6.0, 0.1); fader.setSkewFactorFromMidPoint (-10.0);
         fader.setTextValueSuffix (" dB"); fader.setDoubleClickReturnValue (true, 0.0);
         fader.onValueChange = [this] { if (auto vp = volume()) vp->setVolumeDb ((float) fader.getValue()); touch ("Volume", juce::String (fader.getValue(), 1) + " dB"); };
-        knobs[2].setRange (-1.0, 1.0, 0.01); knobs[2].setDoubleClickReturnValue (true, 0.0);
-        knobs[2].textFromValueFunction = [] (double v) { return std::abs (v) < 0.01 ? juce::String ("C") : juce::String (juce::roundToInt (std::abs (v) * 100)) + (v < 0 ? " L" : " R"); };
-        knobs[2].onValueChange = [this] { if (auto vp = volume()) vp->setPan ((float) knobs[2].getValue()); touch ("Pan", knobs[2].getTextFromValue (knobs[2].getValue())); };
-        for (int i = 0; i < 2; ++i)
+        pan.onValueChange = [this] { if (auto vp = volume()) vp->setPan ((float) pan.getValue()); touch ("Pan", pan.getTextFromValue (pan.getValue())); };
+        // HI / MID / LOW isolator knobs: 12 o'clock = 0 dB, fully left = kill
+        static const char* bandName[] { "Hi", "Mid", "Low" };
+        for (int i = 0; i < 3; ++i)
         {
-            knobs[i].setRange (-60.0, 6.0, 0.1); knobs[i].setSkewFactorFromMidPoint (-12.0); knobs[i].setTextValueSuffix (" dB");
+            knobs[i].setRange (VegaDJEQPlugin::killDb, VegaDJEQPlugin::maxDb, 0.1); knobs[i].setSkewFactorFromMidPoint (0.0);
             knobs[i].setDoubleClickReturnValue (true, 0.0);
-            knobs[i].onValueChange = [this, i] { if (auto* s = sendFor (i)) { s->setGainDb ((float) knobs[i].getValue()); touch ("Send > " + sendName[i], juce::String (knobs[i].getValue(), 1) + " dB"); } };
+            knobs[i].textFromValueFunction = [] (double v) { return v <= VegaDJEQPlugin::killDb + 0.05 ? juce::String ("KILL") : (v > 0 ? "+" : "") + juce::String (v, 1) + " dB"; };
+            knobs[i].onValueChange = [this, i]
+            {
+                if (auto* d = dj()) d->band[i]->setParameter ((float) knobs[i].getValue(), juce::sendNotification);
+                touch (bandName[i], knobs[i].getTextFromValue (knobs[i].getValue()));
+                repaint();
+            };
         }
+        // DJ filter: left = low-pass, right = high-pass, centre = off
+        knobs[3].setRange (-1.0, 1.0, 0.001); knobs[3].setDoubleClickReturnValue (true, 0.0);
+        knobs[3].textFromValueFunction = [] (double v) { return VegaDJEQPlugin::describeFilter ((float) v); };
+        knobs[3].onValueChange = [this]
+        {
+            if (auto* d = dj()) d->filter->setParameter ((float) knobs[3].getValue(), juce::sendNotification);
+            touch ("Filter", knobs[3].getTextFromValue (knobs[3].getValue()));
+            repaint();
+        };
+        knobs[0].setTooltip ("HI - highs above 2.5 kHz (turn fully left to kill)");
+        knobs[1].setTooltip ("MID - 250 Hz to 2.5 kHz (turn fully left to kill)");
+        knobs[2].setTooltip ("LOW - lows below 250 Hz (turn fully left to kill)");
+        knobs[3].setTooltip ("FILTER - left: low-pass, right: high-pass, centre: off (double-click to reset)");
+        addAndMakeVisible (pan);
         addAndMakeVisible (fader);
         for (auto& k : knobs) addAndMakeVisible (k);
         if (track != nullptr)
@@ -227,7 +273,6 @@ public:
     void rebuildSlots()
     {
         slots.clear(); sends.clear();
-        sendPlugins[0] = sendPlugins[1] = nullptr;
         if (track == nullptr) { updateKnobs(); resized(); return; }
         for (auto* p : vs.session.getInsertPlugins (*track))
         {
@@ -242,14 +287,13 @@ public:
             };
             addAndMakeVisible (b);
         }
-        int n = 0;
         for (auto* bus : vs.session.getBuses())
             if (auto* s = vs.session.findSend (*track, *bus))
             {
-                if (n < 2) { sendPlugins[n] = s; sendName[n] = bus->getName(); }
-                else { auto* row = sends.add (new SendRow (*s, bus->getName())); addAndMakeVisible (row->knob); addAndMakeVisible (row->label); }
-                ++n;
+                auto* row = sends.add (new SendRow (*s, bus->getName()));
+                addAndMakeVisible (row->knob); addAndMakeVisible (row->label);
             }
+        djPlugin = vs.session.djEq (*track);
         if (DawSession::kindOf (*track) == DawSession::TrackKind::midi)
         {
             auto* first = track->pluginList[0];
@@ -277,9 +321,16 @@ public:
         if (auto vp = volume())
         {
             if (! fader.isMouseButtonDown()) fader.setValue (vp->getVolumeDb(), juce::dontSendNotification);
-            if (! knobs[2].isMouseButtonDown()) knobs[2].setValue (vp->getPan(), juce::dontSendNotification);
+            if (! pan.isMouseButtonDown()) pan.setValue (vp->getPan(), juce::dontSendNotification);
         }
-        for (int i = 0; i < 2; ++i) if (auto* s = sendFor (i)) if (! knobs[i].isMouseButtonDown()) knobs[i].setValue (s->getGainDb(), juce::dontSendNotification);
+        if (auto* d = dj())
+        {
+            bool changed = false;
+            for (int i = 0; i < 3; ++i)
+                if (! knobs[i].isMouseButtonDown() && std::abs (knobs[i].getValue() - d->band[i]->getCurrentValue()) > 0.05) { knobs[i].setValue (d->band[i]->getCurrentValue(), juce::dontSendNotification); changed = true; }
+            if (! knobs[3].isMouseButtonDown() && std::abs (knobs[3].getValue() - d->filter->getCurrentValue()) > 0.001) { knobs[3].setValue (d->filter->getCurrentValue(), juce::dontSendNotification); changed = true; }
+            if (changed) repaint();
+        }
         for (auto* s : sends) if (! s->knob.isMouseButtonDown()) s->knob.setValue (s->send.getGainDb(), juce::dontSendNotification);
         if (track != nullptr)
         {
@@ -312,16 +363,20 @@ public:
         {
             g.setColour (juce::Colours::black.withAlpha (0.25f)); g.fillRoundedRectangle (juce::Rectangle<float> (4.0f, (float) headerH, W - 8.0f, (float) editH - 4.0f), 4.0f);
         }
-        // LEDs + labels under the knobs
-        for (int i = 0; i < 3; ++i)
+        // LEDs + labels under the knobs: EQ LEDs go dark when a band is killed, the filter LED lights when it's engaged
+        static const char* labels[] { "HI", "MID", "LOW", "FILTER" };
+        for (int i = 0; i < mixlayout::numKnobs; ++i)
         {
-            auto kb = knobs[i].getBounds().toFloat();
             if (! knobs[i].isVisible()) continue;
-            const bool lit = knobs[i].isEnabled();
-            xl::drawLed (g, juce::Rectangle<float> (16.0f, 4.0f).withCentre ({ kb.getCentreX(), kb.getBottom() + 4.0f }), xl::rowLed[i], lit ? 1.0f : 0.0f);
-            g.setFont (VegaFonts::ui (8.5f, true)); g.setColour (lit ? VegaColours::textDim : VegaColours::textDim.withAlpha (0.4f));
-            const juce::String lab = i == 2 ? juce::String ("PAN") : (sendFor (i) != nullptr ? "> " + sendName[i].toUpperCase() : juce::String ("SEND ") + (i == 0 ? "A" : "B"));
-            g.drawText (lab, 4, (int) kb.getBottom() + 8, W - 8, 11, juce::Justification::centred, true);
+            auto kb = knobs[i].getBounds().toFloat();
+            const double v = knobs[i].getValue();
+            const bool lit = i < 3 ? v > VegaDJEQPlugin::killDb + 0.05 : std::abs (v) >= 0.03;
+            xl::drawLed (g, juce::Rectangle<float> (16.0f, 4.0f).withCentre ({ kb.getCentreX(), kb.getBottom() + 3.0f }), xl::rowLed[i], lit ? 1.0f : 0.0f);
+            g.setFont (VegaFonts::ui (8.5f, true));
+            const bool atDefault = i < 3 ? std::abs (v) < 0.05 : std::abs (v) < 0.03;
+            g.setColour (atDefault ? VegaColours::textDim : xl::rowLed[i].brighter (0.3f));
+            const juce::String lab = atDefault ? juce::String (labels[i]) : juce::String (labels[i]) + "  " + knobs[i].getTextFromValue (v).replace (" dB", "");
+            g.drawText (lab, 2, (int) kb.getBottom() + 7, W - 4, 11, juce::Justification::centred, true);
         }
         // scale ticks to the right of the fader
         auto fb = fader.getBounds();
@@ -374,12 +429,13 @@ public:
         }
         else if (track == nullptr) y += editH;
         y += 4;
-        for (int i = 0; i < 3; ++i)
+        for (int i = 0; i < numKnobs; ++i)
         {
-            knobs[i].setVisible (track != nullptr || i == 2);
-            knobs[i].setBounds (W / 2 - 25, y + (i * knobRowH), 50, 46);
+            knobs[i].setVisible (track != nullptr);
+            knobs[i].setBounds (W / 2 - 23, y + (i * knobRowH), 46, 42);
         }
-        y += 3 * knobRowH + 4;
+        y += numKnobs * knobRowH;
+        pan.setBounds (10, y, W - 20, 20); y += 26;
         const int fBottom = (track != nullptr ? padY (h, 0) - 20 : h - bottom - 20) - 16;
         fader.setBounds (W / 2 - 36, y, 60, std::max (60, fBottom - y));
         meterArea = { fader.getX() - 6, y + 10, 8, std::max (40, fader.getHeight() - 20) };
@@ -393,15 +449,14 @@ public:
     te::AudioTrack::Ptr track;
 private:
     bool showEditSection() const { return owner.showEdit && track != nullptr; }
-    te::AuxSendPlugin* sendFor (int i) const { return dynamic_cast<te::AuxSendPlugin*> (sendPlugins[i].get()); }
+    VegaDJEQPlugin* dj() const { return dynamic_cast<VegaDJEQPlugin*> (djPlugin.get()); }
     void updateKnobs()
     {
-        for (int i = 0; i < 2; ++i)
+        if (auto* d = dj())
         {
-            knobs[i].setEnabled (sendFor (i) != nullptr);
-            knobs[i].setTooltip (sendFor (i) != nullptr ? "Send to " + sendName[i] : juce::String ("No send - use + SEND (press Mode to show it)"));
+            for (int i = 0; i < 3; ++i) knobs[i].setValue (d->band[i]->getCurrentValue(), juce::dontSendNotification);
+            knobs[3].setValue (d->filter->getCurrentValue(), juce::dontSendNotification);
         }
-        knobs[2].setTooltip ("Pan");
         repaint();
     }
     void touch (const juce::String& what, const juce::String& value) { owner.touched (name() + "  " + what, value); }
@@ -495,10 +550,10 @@ private:
     MixerView& owner;
     ViewState& vs;
     int col = 0;
-    xl::Fader fader; xl::Knob knobs[3]; xl::Pad pads[2];
+    xl::Fader fader; xl::Knob knobs[mixlayout::numKnobs]; xl::PanBar pan; xl::Pad pads[2];
     juce::TextButton instrument, addFx, addSend, swapInst; juce::ComboBox output;
     juce::OwnedArray<juce::TextButton> slots; juce::OwnedArray<SendRow> sends; juce::Array<te::AudioTrack*> outBuses;
-    te::Plugin::Ptr sendPlugins[2]; juce::String sendName[2];
+    te::Plugin::Ptr djPlugin;
     te::LevelMeasurer::Client client; te::LevelMeasurer* measurer = nullptr;
     bool masterAdded = false, wasSelected = false; te::EditPlaybackContext* masterCtx = nullptr;
     float level[2] { -100, -100 }; juce::Rectangle<int> meterArea, valueArea;

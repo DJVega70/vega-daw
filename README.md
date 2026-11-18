@@ -11,6 +11,33 @@ A digital audio workstation for the Vega Productions suite — built on the open
 
 First run: **Options > Audio / MIDI settings** (pick ASIO / WASAPI on Windows, CoreAudio on Mac, and enable your MIDI keyboard), then open the **PLUGINS** panel (button at the top right, or press **B**). The DAW scans your standard VST3 folder (and AU on Mac) by itself on first launch and picks up newly installed plug-ins every time it starts. Use **FOLDERS** if you keep .vst3 files somewhere else.
 
+**Mixer (Tab)**, styled after a Launch Control XL, with a DJ section on every channel:
+- **HI / MID / LOW** (pink / blue / green) is a 3-band isolator EQ.
+  - The crossovers are at 250 Hz and 2.5 kHz.
+  - 12 o'clock is flat, the top of each knob is +6 dB, and turning a knob fully left **kills** that band.
+  - The LED goes dark when a band is killed.
+- **FILTER** (orange) is a one-knob DJ filter.
+  - Turn it left for low-pass and right for high-pass. The centre is off.
+  - The LED lights, and the readout shows the cutoff, while it's engaged.
+  - Double-click any knob to reset it.
+- **Pan** is the small slider under the knobs. Sends are in the channel's edit section (press **Mode**).
+- **Each fader** has a scale and a level meter. Under the faders are two rows of lit pads: **Solo** and **Mute** (lit = playing).
+- **The left column** has:
+  - a display showing the last control you touched;
+  - **Page ▲▼** to move 8 channels at a time;
+  - **Track ◀▶** to select the previous or next track;
+  - **Record / Play**;
+  - **Shift**, which turns the pads into **Arm / Select**;
+  - **Mode**, which shows or hides each channel's instrument, inserts and sends.
+
+![mixer](docs/mixer.png)
+
+## Download
+- **Windows:** https://github.com/DJVega70/vega-daw/releases/latest/download/VegaProductions-DAW-Windows.zip — unzip anywhere and run `Vega Productions DAW.exe`.
+- **Mac:** https://github.com/DJVega70/vega-daw/releases/latest/download/VegaProductions-DAW-macOS.zip — drag the app to Applications, then run once in Terminal: `xattr -cr "/Applications/Vega Productions DAW.app"`
+
+First run: **Options > Audio / MIDI settings** (pick ASIO / WASAPI on Windows, CoreAudio on Mac, and enable your MIDI keyboard), then open the **PLUGINS** panel (button at the top right, or press **B**). The DAW scans your standard VST3 folder (and AU on Mac) by itself on first launch and picks up newly installed plug-ins every time it starts. Use **FOLDERS** if you keep .vst3 files somewhere else.
+
 **Mixer (Tab)**, styled after a Launch Control XL:
 - **Each channel** has:
   - three knob rows: Send A (pink), Send B (blue) and Pan (green), each with an LED that lights when the knob is in use;

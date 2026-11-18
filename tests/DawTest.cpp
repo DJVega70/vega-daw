@@ -13,6 +13,24 @@ static float peakOf (const juce::File& f, te::Engine& e)
     return b.getMagnitude (0, b.getNumSamples());
 }
 
+
+// level (dB) of a sine at frequency f in the middle of a rendered file
+static float toneDb (const juce::File& f, te::Engine& e, double hz)
+{
+    std::unique_ptr<juce::AudioFormatReader> r (e.getAudioFileFormatManager().readFormatManager.createReaderFor (f));
+    if (r == nullptr) return -999;
+    const int n = 48000, start = (int) (r->sampleRate * 1.0);
+    juce::AudioBuffer<float> b (1, n);
+    r->read (&b, 0, n, start, true, false);
+    double re = 0, im = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        const double w = 0.5 - 0.5 * std::cos (2 * juce::MathConstants<double>::pi * i / n), ph = 2 * juce::MathConstants<double>::pi * hz * i / r->sampleRate;
+        re += b.getSample (0, i) * w * std::cos (ph); im += b.getSample (0, i) * w * std::sin (ph);
+    }
+    return (float) juce::Decibels::gainToDecibels (std::sqrt (re * re + im * im) * 4.0 / n, -200.0);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -121,6 +139,63 @@ int main()
         check (faderFb && muteLed && nameSx, "HUI feedback: motor-fader positions, mute LED and track names are sent");
         sent.clear(); hui.updateFeedback();
         check (sent.empty(), "HUI feedback only sends changes (" + juce::String ((int) sent.size()) + " msgs when idle)");
+    }
+    {   // DJ EQ / filter on every channel
+        DawSession d (engine);
+        auto tone = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_dj_tones.wav");
+        {
+            tone.deleteFile();
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (tone), 48000.0, 2, 24, {}, 0));
+            juce::AudioBuffer<float> b (2, 48000 * 3);
+            for (int i = 0; i < b.getNumSamples(); ++i)
+            {
+                const double t = i / 48000.0;
+                const float v = (float) (0.2 * std::sin (2 * juce::MathConstants<double>::pi * 80 * t) + 0.2 * std::sin (2 * juce::MathConstants<double>::pi * 1000 * t) + 0.2 * std::sin (2 * juce::MathConstants<double>::pi * 8000 * t));
+                b.setSample (0, i, v); b.setSample (1, i, v);
+            }
+            w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+        }
+        auto* t = d.getTracks()[0];
+        d.insertAudioFile (*t, tone, te::TimePosition());
+        auto* eq = d.djEq (*t, false);
+        check (eq != nullptr && d.getInsertPlugins (*t).isEmpty(), "every channel has a DJ EQ, hidden from the insert list");
+        auto render = [&] (float hi, float mid, float low, float filt, const char* name)
+        {
+            eq->band[0]->setParameter (hi, juce::sendNotificationSync); eq->band[1]->setParameter (mid, juce::sendNotificationSync);
+            eq->band[2]->setParameter (low, juce::sendNotificationSync); eq->filter->setParameter (filt, juce::sendNotificationSync);
+            auto o = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile (juce::String ("vega_dj_") + name + ".wav");
+            d.exportWav (o, te::TimeRange (te::TimePosition(), te::TimePosition::fromSeconds (2.5)));
+            std::array<float, 3> r { toneDb (o, engine, 80), toneDb (o, engine, 1000), toneDb (o, engine, 8000) };
+            o.deleteFile();
+            return r;
+        };
+        const auto flat = render (0, 0, 0, 0, "flat");
+        check (std::abs (flat[0] - flat[1]) < 1.0f && std::abs (flat[2] - flat[1]) < 1.0f && flat[1] > -20.0f,
+               "DJ EQ flat at 0 dB (80 Hz " + juce::String (flat[0], 1) + ", 1 kHz " + juce::String (flat[1], 1) + ", 8 kHz " + juce::String (flat[2], 1) + " dB)");
+        auto lowKill = render (0, 0, VegaDJEQPlugin::killDb, 0, "lowkill");
+        check (lowKill[0] < flat[0] - 30 && std::abs (lowKill[1] - flat[1]) < 1.5f && std::abs (lowKill[2] - flat[2]) < 1.0f, "LOW kill removes the bass (" + juce::String (lowKill[0] - flat[0], 1) + " dB), mids/highs stay");
+        auto midKill = render (0, VegaDJEQPlugin::killDb, 0, 0, "midkill");
+        check (midKill[1] < flat[1] - 25 && std::abs (midKill[0] - flat[0]) < 1.5f && std::abs (midKill[2] - flat[2]) < 1.5f, "MID kill (" + juce::String (midKill[1] - flat[1], 1) + " dB)");
+        auto hiKill = render (VegaDJEQPlugin::killDb, 0, 0, 0, "hikill");
+        check (hiKill[2] < flat[2] - 30 && std::abs (hiKill[0] - flat[0]) < 1.0f, "HI kill removes the highs (" + juce::String (hiKill[2] - flat[2], 1) + " dB)");
+        auto boost = render (6, 0, 0, 0, "boost");
+        check (std::abs (boost[2] - flat[2] - 6.0f) < 1.0f, "HI +6 dB boost (" + juce::String (boost[2] - flat[2], 1) + " dB)");
+        auto lpf = render (0, 0, 0, -0.6f, "lpf");
+        check (lpf[2] < flat[2] - 20 && std::abs (lpf[0] - flat[0]) < 1.5f, "filter left = low-pass: 8 kHz " + juce::String (lpf[2] - flat[2], 1) + " dB, bass kept");
+        auto hpf = render (0, 0, 0, 0.6f, "hpf");
+        check (hpf[0] < flat[0] - 20 && std::abs (hpf[2] - flat[2]) < 1.5f, "filter right = high-pass: 80 Hz " + juce::String (hpf[0] - flat[0], 1) + " dB, highs kept");
+        // settings are saved with the project
+        eq->band[2]->setParameter (-12.0f, juce::sendNotificationSync); eq->filter->setParameter (0.4f, juce::sendNotificationSync);
+        auto pf = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_dj.vegaproj");
+        d.saveProjectAs (pf);
+        DawSession d2 (engine); d2.openProject (pf);
+        auto* eq2 = d2.djEq (*d2.getTracks()[0], false);
+        check (eq2 != nullptr && std::abs (eq2->band[2]->getCurrentValue() + 12.0f) < 0.1f && std::abs (eq2->filter->getCurrentValue() - 0.4f) < 0.01f, "DJ EQ and filter settings restored from the project");
+        check (d2.getInsertPlugins (*d2.getTracks()[0]).isEmpty(), "reopened project doesn't get a second DJ EQ");
+        int count = 0; for (auto* p : d2.getTracks()[0]->pluginList.getPlugins()) if (dynamic_cast<VegaDJEQPlugin*> (p)) ++count;
+        check (count == 1, "exactly one DJ EQ per channel after reopening");
+        pf.deleteFile(); tone.deleteFile();
     }
     out.deleteFile(); proj.deleteFile();
     std::cout << (fails == 0 ? "ALL PASSED" : "FAILURES: " + std::to_string (fails)) << "\n";
