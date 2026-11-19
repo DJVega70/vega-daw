@@ -20,6 +20,7 @@ juce_add_gui_app(VegaDAW
     PRODUCT_NAME "Vega Productions DAW"
     COMPANY_NAME "Vega Productions"
     BUNDLE_ID com.vegaproductions.daw
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/VegaDAW-icon.png"
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT "Recording audio"
     NEEDS_CURL FALSE

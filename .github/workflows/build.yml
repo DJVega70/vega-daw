@@ -81,10 +81,21 @@ jobs:
           Copy-Item "build/VegaDAW_artefacts/Release/VegaStemHelper.exe", "build/VegaDAW_artefacts/Release/VegaStemHelperAVX2.exe" dist/
           Copy-Item README.md, LICENSE, TRACKTION_LICENSE.md dist/
           Compress-Archive -Path dist/* -DestinationPath VegaProductions-DAW-Windows.zip
+      - name: Build the installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          $ver = (Select-String -Path CMakeLists.txt -Pattern 'project\(VegaDAW VERSION ([0-9.]+)\)').Matches[0].Groups[1].Value
+          & $iscc "/DAppVersion=$ver.${{ github.run_number }}" "/DSrcDir=$PWD\dist" installer\VegaDAW.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item installer-out\VegaProductions-DAW-Setup.exe .
       - uses: actions/upload-artifact@v4
         with:
           name: VegaProductions-DAW-Windows
-          path: VegaProductions-DAW-Windows.zip
+          path: |
+            VegaProductions-DAW-Windows.zip
+            VegaProductions-DAW-Setup.exe
 
   macos:
     name: macOS app (Universal)
@@ -127,7 +138,7 @@ jobs:
       - name: Collect zips
         run: |
           mkdir out
-          find dist -name '*.zip' -exec cp {} out/ \;
+          find dist \( -name '*.zip' -o -name '*Setup.exe' \) -exec cp {} out/ \;
           ls -la out
       - name: Carry over the previous Mac build if this run has none
         env:
@@ -143,7 +154,10 @@ jobs:
           name: Vega Productions DAW - build ${{ github.run_number }}
           make_latest: true
           body: |
-            **Windows:** download `VegaProductions-DAW-Windows.zip`, unzip anywhere and run `Vega Productions DAW.exe`.
+            **Windows (recommended):** download `VegaProductions-DAW-Setup.exe` and run it. It installs to Program Files, adds Start menu (and optional desktop) shortcuts, opens `.vegaproj` projects, and shows up in Settings > Apps for uninstalling. Running a newer Setup updates your install.
+            **Windows (portable):** `VegaProductions-DAW-Windows.zip`, unzip anywhere and run `Vega Productions DAW.exe`.
             **Mac:** download `VegaProductions-DAW-macOS.zip`, drag the app to Applications, then run once in Terminal:
             `xattr -cr "/Applications/Vega Productions DAW.app"`
-          files: out/*.zip
+          files: |
+            out/*.zip
+            out/*.exe
