@@ -1,0 +1,87 @@
+{
+ "id": "cr78",
+ "name": "CR-78 Soul",
+ "credit": "Roland CR-78 samples by Boxed Ear via oramics sampled - public domain",
+ "pads": [
+  {
+   "note": 36,
+   "name": "Kick",
+   "file": "36.wav"
+  },
+  {
+   "note": 38,
+   "name": "Snare",
+   "file": "38.wav"
+  },
+  {
+   "note": 39,
+   "name": "Snare Acc",
+   "file": "39.wav"
+  },
+  {
+   "note": 42,
+   "name": "Hat",
+   "file": "42.wav"
+  },
+  {
+   "note": 37,
+   "name": "Rim",
+   "file": "37.wav"
+  },
+  {
+   "note": 40,
+   "name": "Kick Acc",
+   "file": "40.wav"
+  },
+  {
+   "note": 44,
+   "name": "Metal Hat",
+   "file": "44.wav"
+  },
+  {
+   "note": 46,
+   "name": "Hat Acc",
+   "file": "46.wav"
+  },
+  {
+   "note": 41,
+   "name": "Conga",
+   "file": "41.wav"
+  },
+  {
+   "note": 45,
+   "name": "Bongo Lo",
+   "file": "45.wav"
+  },
+  {
+   "note": 48,
+   "name": "Bongo Hi",
+   "file": "48.wav"
+  },
+  {
+   "note": 49,
+   "name": "Cymbal",
+   "file": "49.wav"
+  },
+  {
+   "note": 56,
+   "name": "Cowbell",
+   "file": "56.wav"
+  },
+  {
+   "note": 70,
+   "name": "Guiro",
+   "file": "70.wav"
+  },
+  {
+   "note": 54,
+   "name": "Tamb",
+   "file": "54.wav"
+  },
+  {
+   "note": 51,
+   "name": "Guiro Long",
+   "file": "51.wav"
+  }
+ ]
+}

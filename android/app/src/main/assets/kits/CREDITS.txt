@@ -1,0 +1,16 @@
+Vega Sketch - bundled drum kits
+================================
+
+These recorded vintage drum machines are included because their samples are free to
+redistribute. They were trimmed and level-matched (peak -1 dB) for Vega Sketch; nothing else
+was changed.
+
+Vintage 808  - Roland TR-808, recorded by Michael Fischer (Technopolis), 1994.
+               Released free with no restrictions on use.
+LinnDrum     - LinnDrum LM-2 samples, machines.hyperreal.org, via the oramics "sampled"
+               collection (github.com/oramics/sampled). Public domain.
+CR-78 Soul   - Roland CR-78 samples by Boxed Ear, via oramics "sampled". Public domain.
+TR-707 House - Roland TR-707 samples from the fluid-music open-drums collection. Public domain.
+
+Roland, TR-808, CR-78, TR-707 and LinnDrum are trademarks of their owners. Vega Productions isn't
+affiliated with them; the names only say which machine was recorded.

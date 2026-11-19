@@ -154,7 +154,7 @@ public:
         bool toArrangement = true;           // also lay the scenes out one after another in the arrangement
         bool adoptTempo = true;
     };
-    struct SketchResult { bool ok = false; juce::String message, name; int tracks = 0, clips = 0; };
+    struct SketchResult { bool ok = false; juce::String message, name; int tracks = 0, clips = 0, kits = 0; };
     SketchResult importSketch (const juce::File& sketchFile, const SketchImport&);
     /** A plug-in the scanner has found, by (part of) its name: e.g. "Vega Productions Drums" */
     const juce::PluginDescription* findPlugin (const juce::String& nameContains) const;

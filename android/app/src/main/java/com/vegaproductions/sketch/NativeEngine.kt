@@ -20,6 +20,10 @@ object NativeEngine {
     external fun setClipNotes(track: Int, scene: Int, lengthBeats: Double, packed: DoubleArray)
     external fun setClipAudioFile(track: Int, scene: Int, lengthBeats: Double, path: String): Boolean
     external fun clearClip(track: Int, scene: Int)
+    /** a sample kit in engine slot 'slot': notes[i] plays paths[i] (WAV) */
+    external fun loadSampleKit(slot: Int, notes: IntArray, paths: Array<String>): Boolean
+    external fun setTrackSampleKit(track: Int, slot: Int)
+    external fun setTrackWarmth(track: Int, amount: Float)
 
     external fun play()
     external fun stop()

@@ -42,6 +42,10 @@ public:
     void setClipNotes (int track, int scene, double lengthBeats, const std::vector<NoteEv>&);
     void setClipAudio (int track, int scene, double lengthBeats, std::vector<float> left, std::vector<float> right);
     void clearClip (int track, int scene);
+    /** Sample kits: 'slot' is any number the app chooses; notes[i] plays the WAV in paths[i] */
+    bool loadSampleKit (int slot, const std::vector<int>& notes, const std::vector<std::string>& paths);
+    void setTrackSampleKit (int track, int slot);            // -1 = the synthesized kit
+    void setTrackWarmth (int track, float amount);
     void setQuantiseRecording (double grid) { std::lock_guard<std::mutex> g (lock); recordQuantise = grid; }
 
     // ---- performing
@@ -78,7 +82,7 @@ private:
         ClipData clips[kScenes];
         int playingScene = -1, queuedScene = -1; bool stopQueued = false;
         double clipStart = 0;                       // beat the playing clip started at
-        DrumKit drums; PolySynth synth;
+        DrumKit drums; PolySynth synth; Warmth warmth; int sampleKit = -1; float warmthAmount = 0;
         std::vector<std::pair<int, double>> held;   // sequencer notes sounding: note, off beat
         float level = 0;
     };
@@ -105,5 +109,6 @@ private:
     } recording;
     float clickPhase = 0, clickEnv = 0, clickFreq = 1000;
     float inputLevel = 0;
+    std::vector<std::shared_ptr<const SampleKit>> sampleKits;
 };
 }

@@ -7,6 +7,7 @@
 #include <array>
 #include <vector>
 #include <string>
+#include <memory>
 
 namespace vega
 {
@@ -85,15 +86,36 @@ inline const std::vector<KitParams>& kits()
     return k;
 }
 
+/** Recorded drum hits, one per MIDI note (at the engine sample rate) */
+struct SampleKit
+{
+    struct Hit { std::vector<float> l, r; };
+    std::array<std::shared_ptr<const Hit>, 128> byNote {};
+};
+
 class DrumKit
 {
 public:
     void prepare (float sampleRate) { sr = sampleRate; }
     void setKit (int k) { kit = std::clamp (k, 0, (int) kits().size() - 1); }
     int getKit() const { return kit; }
+    void setSampleKit (std::shared_ptr<const SampleKit> k) { if (k != samples) { for (auto& v : sampleVoices) v.hit.reset(); samples = std::move (k); } }
+    const std::shared_ptr<const SampleKit>& getSampleKit() const { return samples; }
 
     void trigger (int note, int velocity)
     {
+        if (samples != nullptr)
+        {
+            if (note == 42 || note == 44) for (auto& v : sampleVoices) if (v.hit && v.note == 46) v.choke = true;
+            auto hit = samples->byNote[(size_t) std::clamp (note, 0, 127)];
+            if (hit == nullptr || hit->l.empty()) return;
+            SampleVoice* v = nullptr;
+            for (auto& c : sampleVoices) if (! c.hit) { v = &c; break; }
+            if (v == nullptr) { v = &sampleVoices[0]; for (auto& c : sampleVoices) if (c.pos > v->pos) v = &c; }
+            const float vel = std::clamp (velocity, 1, 127) / 127.0f;
+            *v = SampleVoice(); v->hit = hit; v->note = note; v->gain = 0.25f + 0.75f * vel * vel;
+            return;
+        }
         if (note == 42 || note == 44) for (auto& v : voices) if (v.active && v.note == 46) v.choke = true;   // closed hat chokes the open hat
         Voice* v = nullptr;
         for (auto& c : voices) if (! c.active) { v = &c; break; }
@@ -110,6 +132,21 @@ public:
     /** Adds into the buffers */
     void render (float* l, float* r, int n)
     {
+        for (auto& v : sampleVoices)
+        {
+            if (! v.hit) continue;
+            const auto& h = *v.hit;
+            const size_t len = h.l.size();
+            for (int i = 0; i < n; ++i)
+            {
+                if (v.pos >= len) { v.hit.reset(); break; }
+                float g = v.gain;
+                if (v.choke) { v.chokeGain *= 0.993f; g *= v.chokeGain; if (v.chokeGain < 0.001f) { v.hit.reset(); break; } }
+                l[i] += h.l[v.pos] * g; r[i] += (h.r.empty() ? h.l[v.pos] : h.r[v.pos]) * g;
+                ++v.pos;
+            }
+        }
+        if (samples != nullptr) return;
         const auto& p = kits()[(size_t) kit];
         for (auto& v : voices)
         {
@@ -125,9 +162,12 @@ public:
             }
         }
     }
-    void allOff() { for (auto& v : voices) v.active = false; }
+    void allOff() { for (auto& v : voices) v.active = false; for (auto& v : sampleVoices) v.hit.reset(); }
 
 private:
+    struct SampleVoice { std::shared_ptr<const SampleKit::Hit> hit; int note = 0; size_t pos = 0; float gain = 1, chokeGain = 1; bool choke = false; };
+    std::shared_ptr<const SampleKit> samples;
+    std::array<SampleVoice, 24> sampleVoices {};
     struct Voice
     {
         bool active = false, choke = false; int note = 0; float vel = 1, t = 0, phase = 0, phase2 = 0, f0 = 0, maxTime = 3.0f, chokeGain = 1.0f;
@@ -261,6 +301,39 @@ private:
     int kit = 0;
     uint32_t seed = 1;
     std::array<Voice, 24> voices {};
+};
+
+//============================================================================== warmth
+/** Tape-style colour: gentle asymmetric saturation, a softer top end and a touch more low end. 0 = clean. */
+struct Warmth
+{
+    float amount = 0, lpL = 0, lpR = 0, lsL = 0, lsR = 0, coeff = 1, lowCoeff = 0.01f, sr = 48000;
+    void prepare (float sampleRate) { sr = sampleRate; set (amount); }
+    void set (float a)
+    {
+        amount = std::clamp (a, 0.0f, 1.0f);
+        const float cutoff = 20000.0f - amount * 12500.0f;            // 20 kHz -> 7.5 kHz
+        coeff = 1.0f - std::exp (-kTwoPi * cutoff / sr);
+        lowCoeff = 1.0f - std::exp (-kTwoPi * 120.0f / sr);
+    }
+    inline float sat (float x) const
+    {
+        // unity gain for quiet signals, so warmth changes the colour (and rounds off peaks), not the level
+        const float d = 1.0f + amount * 2.2f, bias = 0.12f * amount, tb = std::tanh (bias);
+        return (std::tanh (d * x + bias) - tb) / (d * (1.0f - tb * tb));
+    }
+    void process (float* l, float* r, int n)
+    {
+        if (amount < 0.001f) return;
+        const float lowBoost = amount * 0.35f;
+        for (int i = 0; i < n; ++i)
+        {
+            lsL += lowCoeff * (l[i] - lsL); lsR += lowCoeff * (r[i] - lsR);
+            const float xl = sat (l[i] + lsL * lowBoost), xr = sat (r[i] + lsR * lowBoost);
+            lpL += coeff * (xl - lpL); lpR += coeff * (xr - lpR);
+            l[i] = lpL; r[i] = lpR;
+        }
+    }
 };
 
 //============================================================================== synth

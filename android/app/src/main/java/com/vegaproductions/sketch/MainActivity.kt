@@ -17,6 +17,29 @@ import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     private lateinit var studio: Studio
+    private lateinit var kits: KitLibrary
+    private var padTarget: Pair<Int, Int>? = null
+    private val pickKit = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isEmpty()) return@registerForActivityResult
+        toast("Importing the kit...")
+        lifecycleScope.launch {
+            val kit = withContext(Dispatchers.IO) { kits.importKit(uris) }
+            if (kit != null) studio.updateTrack(studio.selectedTrack) { if (type == TrackType.DRUMS) kitId = kit.id }
+            toast(if (kit != null) "\"${kit.name}\": ${kits.lastImportReport}" else kits.lastImportReport)
+        }
+    }
+    private val pickPad = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val (ti, note) = padTarget ?: return@registerForActivityResult
+        padTarget = null
+        if (uri == null) return@registerForActivityResult
+        val track = studio.sketch.tracks.getOrNull(ti) ?: return@registerForActivityResult
+        val kit = kits.kit(track.kitId) ?: kits.kit(DEFAULT_KIT) ?: return@registerForActivityResult
+        lifecycleScope.launch {
+            val k = withContext(Dispatchers.IO) { kits.setPadSound(kit, note, uri) }
+            if (k != null) { studio.updateTrack(ti) { kitId = k.id }; toast("Pad loaded" + if (k.id != kit.id) " (into your copy, \"${k.name}\")" else "") }
+            else toast(kits.lastImportReport)
+        }
+    }
     private var engineRunning = false
     private var afterMic: (() -> Unit)? = null
     private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -26,7 +49,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        studio = Studio(SketchStore(this))
+        kits = KitLibrary(this)
+        studio = Studio(SketchStore(this, kits))
         startEngine()
         val last = studio.store.list().firstOrNull()?.first
         if (last != null) studio.openId(last) else studio.newSketch()
@@ -36,12 +60,20 @@ class MainActivity : ComponentActivity() {
                     studio,
                     withMic = { action -> withMic(action) },
                     onExport = { export(share = true) },
-                    onSaveToDownloads = { export(share = false) })
+                    onSaveToDownloads = { export(share = false) },
+                    onImportKit = { pickKit.launch(arrayOf("application/zip", "application/x-zip-compressed", "audio/wav", "audio/x-wav", "audio/*", "application/octet-stream")) },
+                    onPickPadSound = { ti, note -> padTarget = ti to note; pickPad.launch(arrayOf("audio/wav", "audio/x-wav", "audio/*")) })
             }
         }
     }
 
-    private fun startEngine() { if (!engineRunning) engineRunning = NativeEngine.start() }
+    private fun startEngine() {
+        if (engineRunning) return
+        engineRunning = NativeEngine.start()
+        // samples are loaded at the device's sample rate, so (re)load them whenever the audio starts
+        if (::kits.isInitialized) { if (kits.kits.isEmpty()) kits.init() else kits.reloadAll() }
+        if (::studio.isInitialized) studio.resyncTracks()
+    }
 
     override fun onStart() { super.onStart(); startEngine(); if (::studio.isInitialized) studio.open(studio.sketch) }
     override fun onStop() {

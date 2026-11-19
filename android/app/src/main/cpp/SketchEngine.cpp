@@ -1,5 +1,6 @@
 #include "SketchEngine.h"
 #include <cstring>
+#include "Wav.h"
 
 namespace vega
 {
@@ -9,7 +10,42 @@ void SketchEngine::prepare (double sampleRate)
 {
     std::lock_guard<std::mutex> g (lock);
     sr = sampleRate;
-    for (auto& t : tracks) { t.drums.prepare ((float) sr); t.synth.prepare ((float) sr); }
+    for (auto& t : tracks) { t.drums.prepare ((float) sr); t.synth.prepare ((float) sr); t.warmth.prepare ((float) sr); }
+}
+
+bool SketchEngine::loadSampleKit (int slot, const std::vector<int>& notes, const std::vector<std::string>& paths)
+{
+    if (slot < 0 || slot > 255) return false;
+    auto kit = std::make_shared<SampleKit>();
+    int loaded = 0;
+    const int rate = (int) sr;
+    for (size_t i = 0; i < notes.size() && i < paths.size(); ++i)
+    {
+        auto hit = std::make_shared<SampleKit::Hit>();
+        if (notes[i] < 0 || notes[i] > 127 || ! readWav (paths[i], rate, hit->l, hit->r)) continue;
+        kit->byNote[(size_t) notes[i]] = hit; ++loaded;
+    }
+    std::lock_guard<std::mutex> g (lock);
+    if ((int) sampleKits.size() <= slot) sampleKits.resize ((size_t) slot + 1);
+    sampleKits[(size_t) slot] = kit;
+    for (auto& t : tracks) if (t.sampleKit == slot) t.drums.setSampleKit (kit);     // reloaded: tracks pick it up
+    return loaded > 0;
+}
+
+void SketchEngine::setTrackSampleKit (int ti, int slot)
+{
+    if (ti < 0 || ti >= kMaxTracks) return;
+    std::lock_guard<std::mutex> g (lock);
+    auto& t = tracks[ti];
+    t.sampleKit = slot;
+    t.drums.setSampleKit (slot >= 0 && slot < (int) sampleKits.size() ? sampleKits[(size_t) slot] : nullptr);
+}
+
+void SketchEngine::setTrackWarmth (int ti, float amount)
+{
+    if (ti < 0 || ti >= kMaxTracks) return;
+    std::lock_guard<std::mutex> g (lock);
+    tracks[ti].warmthAmount = amount; tracks[ti].warmth.set (amount);
 }
 
 void SketchEngine::setTempo (double b) { std::lock_guard<std::mutex> g (lock); bpm = std::clamp (b, 40.0, 220.0); }
@@ -32,7 +68,7 @@ void SketchEngine::removeTrack (int i)
     auto& t = tracks[i];
     t.exists = false; t.playingScene = t.queuedScene = -1; t.stopQueued = false; t.held.clear();
     for (auto& c : t.clips) c = ClipData();
-    t.drums.allOff(); t.synth.allOff();
+    t.drums.allOff(); t.synth.allOff(); t.drums.setSampleKit (nullptr); t.sampleKit = -1; t.warmthAmount = 0; t.warmth.set (0);
     if (recording.active && recording.track == i) recording.active = false;
 }
 
@@ -393,6 +429,7 @@ void SketchEngine::processChunk (float* outL, float* outR, int n)
             t.held.clear();
             if (t.type == TrackType::drums) t.drums.render (tl, tr, n); else if (t.type == TrackType::keys) t.synth.render (tl, tr, n);
         }
+        if (t.type != TrackType::audio) t.warmth.process (tl, tr, n);
         const bool audible = ! t.mute && (! anySolo || t.solo);
         const float gl = t.volume * std::sqrt (0.5f * (1.0f - t.pan)) * 1.414f, gr = t.volume * std::sqrt (0.5f * (1.0f + t.pan)) * 1.414f;
         float peak = 0;
@@ -451,11 +488,11 @@ std::vector<double> SketchEngine::state()
 
 void SketchEngine::renderClipOffline (int ti, int s, int loops, std::vector<float>& outL, std::vector<float>& outR)
 {
-    ClipData c; TrackType type; int sound;
+    ClipData c; TrackType type; int sound; std::shared_ptr<const SampleKit> kit; float warm;
     {
         std::lock_guard<std::mutex> g (lock);
         if (ti < 0 || ti >= kMaxTracks || s < 0 || s >= kScenes) return;
-        c = tracks[ti].clips[s]; type = tracks[ti].type; sound = tracks[ti].sound;
+        c = tracks[ti].clips[s]; type = tracks[ti].type; sound = tracks[ti].sound; kit = tracks[ti].drums.getSampleKit(); warm = tracks[ti].warmthAmount;
     }
     if (! c.used) return;
     const double spb = samplesPerBeat();
@@ -470,7 +507,7 @@ void SketchEngine::renderClipOffline (int ti, int s, int loops, std::vector<floa
         }
         return;
     }
-    DrumKit dk; PolySynth ps; dk.prepare ((float) sr); ps.prepare ((float) sr); dk.setKit (sound); ps.setPreset (sound);
+    DrumKit dk; PolySynth ps; Warmth wm; dk.prepare ((float) sr); ps.prepare ((float) sr); wm.prepare ((float) sr); dk.setKit (sound); ps.setPreset (sound); dk.setSampleKit (kit); wm.set (warm);
     struct Ev { size_t pos; int note; int vel; bool on; };
     std::vector<Ev> evs;
     for (int k = 0; k < loops; ++k)
@@ -493,8 +530,10 @@ void SketchEngine::renderClipOffline (int ti, int s, int loops, std::vector<floa
         size_t next = ei < evs.size() ? std::min (evs[ei].pos, total) : total;
         next = std::min (next, at + 256);
         const int n = (int) std::max<size_t> (1, next - at);
-        if (type == TrackType::drums) dk.render (outL.data() + at, outR.data() + at, std::min (n, (int) (total - at)));
-        else ps.render (outL.data() + at, outR.data() + at, std::min (n, (int) (total - at)));
+        const int m = std::min (n, (int) (total - at));
+        if (type == TrackType::drums) dk.render (outL.data() + at, outR.data() + at, m);
+        else ps.render (outL.data() + at, outR.data() + at, m);
+        wm.process (outL.data() + at, outR.data() + at, m);
         at += (size_t) n;
     }
     for (size_t i = 0; i < total; ++i) { outL[i] = softClip (outL[i] * 1.1f) * 0.98f; outR[i] = softClip (outR[i] * 1.1f) * 0.98f; }

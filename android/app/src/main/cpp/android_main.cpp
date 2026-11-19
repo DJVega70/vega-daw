@@ -154,3 +154,20 @@ FN (jboolean, renderClip) (JNIEnv* env, jobject, jint t, jint s, jint loops, jst
     if (l.empty()) return false;
     return vega::writeWav (str (env, path), l, r, host.sampleRate());
 }
+
+FN (jboolean, loadSampleKit) (JNIEnv* env, jobject, jint slot, jintArray notes, jobjectArray paths)
+{
+    const jsize n = env->GetArrayLength (notes);
+    std::vector<int> ns ((size_t) n);
+    env->GetIntArrayRegion (notes, 0, n, ns.data());
+    std::vector<std::string> ps;
+    for (jsize i = 0; i < env->GetArrayLength (paths); ++i)
+    {
+        auto js = (jstring) env->GetObjectArrayElement (paths, i);
+        ps.push_back (str (env, js));
+        env->DeleteLocalRef (js);
+    }
+    return engine.loadSampleKit (slot, ns, ps);
+}
+FN (void, setTrackSampleKit) (JNIEnv*, jobject, jint t, jint slot) { engine.setTrackSampleKit (t, slot); }
+FN (void, setTrackWarmth) (JNIEnv*, jobject, jint t, jfloat a) { engine.setTrackWarmth (t, a); }

@@ -31,9 +31,16 @@ class Clip(var name: String, var bars: Int, var notes: MutableList<Note> = mutab
 }
 
 class Track(var name: String, var type: TrackType, var sound: Int = 0, var volume: Float = 0.8f, var pan: Float = 0f,
-            var mute: Boolean = false, var solo: Boolean = false, var colour: Long = TRACK_COLOURS[0]) {
+            var mute: Boolean = false, var solo: Boolean = false, var colour: Long = TRACK_COLOURS[0],
+            var kitId: String? = null,          // drums: a sample kit (null = the synthesized kit 'sound')
+            var warmth: Float = 0.3f) {         // tape-style colour, 0..1
     val clips: Array<Clip?> = arrayOfNulls(SCENES)
-    val soundName: String get() = when (type) { TrackType.DRUMS -> KIT_NAMES.getOrElse(sound) { "" }; TrackType.KEYS -> PRESET_NAMES.getOrElse(sound) { "" }; TrackType.AUDIO -> "Mic" }
+}
+
+fun soundName(t: Track, kits: KitLibrary?): String = when (t.type) {
+    TrackType.DRUMS -> kits?.kit(t.kitId)?.name ?: (KIT_NAMES.getOrElse(t.sound) { "" } + if (t.kitId == null) " (synth)" else "")
+    TrackType.KEYS -> PRESET_NAMES.getOrElse(t.sound) { "" }
+    TrackType.AUDIO -> "Mic"
 }
 
 class Sketch(var id: String = UUID.randomUUID().toString(), var name: String = "Sketch", var bpm: Double = 122.0, var beatsPerBar: Int = 4) {
@@ -43,7 +50,7 @@ class Sketch(var id: String = UUID.randomUUID().toString(), var name: String = "
 }
 
 /** Saves sketches in the app's private storage, one folder each (sketch.json + audio/). */
-class SketchStore(private val context: Context) {
+class SketchStore(private val context: Context, val kits: KitLibrary) {
     val root: File get() = File(context.filesDir, "sketches").apply { mkdirs() }
     fun folder(s: Sketch) = File(root, s.id).apply { mkdirs() }
     fun audioFolder(s: Sketch) = File(folder(s), "audio").apply { mkdirs() }
@@ -70,7 +77,19 @@ class SketchStore(private val context: Context) {
         val tracks = JSONArray()
         s.tracks.forEachIndexed { ti, t ->
             val to = JSONObject()
-            to.put("name", t.name); to.put("type", t.type.label); to.put("sound", t.sound); to.put("soundName", t.soundName)
+            to.put("name", t.name); to.put("type", t.type.label); to.put("sound", t.sound); to.put("soundName", soundName(t, kits))
+            to.put("warmth", t.warmth.toDouble())
+            t.kitId?.let { id ->
+                to.put("kitId", id)
+                kits.kit(id)?.let { k ->
+                    // the kit itself travels with an export, so the desktop can load the same sounds into its sampler
+                    if (withRenders) {
+                        val pads = JSONArray()
+                        k.pads.toSortedMap().forEach { (note, p) -> pads.put(JSONObject().put("note", note).put("name", p.first).put("file", "kits/${k.id}/${p.second}")) }
+                        to.put("kit", JSONObject().put("id", k.id).put("name", k.name).put("credit", k.credit).put("pads", pads))
+                    }
+                }
+            }
             to.put("volume", t.volume.toDouble()); to.put("pan", t.pan.toDouble()); to.put("mute", t.mute); to.put("solo", t.solo)
             to.put("colour", String.format("#%06X", t.colour and 0xFFFFFF))
             val clips = JSONArray()
@@ -100,7 +119,8 @@ class SketchStore(private val context: Context) {
             val to = ta.getJSONObject(i)
             val type = TrackType.values().firstOrNull { it.label == to.optString("type") } ?: TrackType.DRUMS
             val t = Track(to.optString("name", "Track"), type, to.optInt("sound"), to.optDouble("volume", 0.8).toFloat(), to.optDouble("pan", 0.0).toFloat(),
-                to.optBoolean("mute"), to.optBoolean("solo"), runCatching { 0xFF000000L or to.optString("colour").removePrefix("#").toLong(16) }.getOrDefault(TRACK_COLOURS[i % 8]))
+                to.optBoolean("mute"), to.optBoolean("solo"), runCatching { 0xFF000000L or to.optString("colour").removePrefix("#").toLong(16) }.getOrDefault(TRACK_COLOURS[i % 8]),
+                to.optString("kitId", "").ifEmpty { null }, to.optDouble("warmth", 0.3).toFloat())
             val ca = to.optJSONArray("clips") ?: JSONArray()
             for (k in 0 until ca.length()) {
                 val co = ca.getJSONObject(k)
@@ -127,6 +147,12 @@ class SketchStore(private val context: Context) {
             z.putNextEntry(ZipEntry("sketch.json")); z.write(toJson(s, withRenders = true).toString(2).toByteArray()); z.closeEntry()
             audioFolder(s).listFiles()?.forEach { f -> z.putNextEntry(ZipEntry("audio/${f.name}")); f.inputStream().use { it.copyTo(z) }; z.closeEntry() }
             renders.listFiles()?.forEach { f -> z.putNextEntry(ZipEntry("renders/${f.name}")); f.inputStream().use { it.copyTo(z) }; z.closeEntry() }
+            s.tracks.mapNotNull { kits.kit(it.kitId) }.distinctBy { it.id }.forEach { k ->
+                k.pads.values.map { it.second }.distinct().forEach { fn ->
+                    val f = File(k.dir, fn)
+                    if (f.exists()) { z.putNextEntry(ZipEntry("kits/${k.id}/$fn")); f.inputStream().use { it.copyTo(z) }; z.closeEntry() }
+                }
+            }
         }
         return zip
     }

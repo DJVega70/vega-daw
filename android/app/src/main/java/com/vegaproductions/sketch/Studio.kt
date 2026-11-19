@@ -7,8 +7,12 @@ import androidx.compose.runtime.setValue
 import java.io.File
 import kotlin.math.roundToInt
 
+const val DEFAULT_KIT = "vintage808"
+
 /** The app's state: the open sketch, what's selected, and the engine kept in step with it. */
 class Studio(val store: SketchStore) {
+    val kits: KitLibrary get() = store.kits
+    fun soundName(t: Track) = soundName(t, kits)
     var sketch by mutableStateOf(Sketch())
         private set
     /** bumped after every change to the sketch, so the screens redraw */
@@ -26,15 +30,17 @@ class Studio(val store: SketchStore) {
     private var recordingTarget: Pair<Int, Int>? = null
 
     fun changed() { version++ }
+    /** after kits are (re)loaded into the engine */
+    fun resyncTracks() { sketch.tracks.indices.forEach { syncTrack(it) } }
 
     // ---------------------------------------------------------------- sketches
     fun newSketch() {
         save()
         val s = Sketch(name = "Sketch " + (store.list().size + 1))
-        s.tracks += Track("Drums", TrackType.DRUMS, 0, 0.85f, colour = TRACK_COLOURS[0])
-        s.tracks += Track("Keys", TrackType.KEYS, 0, 0.7f, colour = TRACK_COLOURS[1])
-        s.tracks += Track("Bass", TrackType.KEYS, 2, 0.75f, colour = TRACK_COLOURS[2])
-        s.tracks += Track("Vocals", TrackType.AUDIO, 0, 0.9f, colour = TRACK_COLOURS[3])
+        s.tracks += Track("Drums", TrackType.DRUMS, 0, 0.85f, colour = TRACK_COLOURS[0], kitId = DEFAULT_KIT, warmth = 0.35f)
+        s.tracks += Track("Keys", TrackType.KEYS, 0, 0.7f, colour = TRACK_COLOURS[1], warmth = 0.25f)
+        s.tracks += Track("Bass", TrackType.KEYS, 2, 0.75f, colour = TRACK_COLOURS[2], warmth = 0.3f)
+        s.tracks += Track("Vocals", TrackType.AUDIO, 0, 0.9f, colour = TRACK_COLOURS[3], warmth = 0f)
         open(s)
     }
     fun open(s: Sketch) {
@@ -56,6 +62,8 @@ class Studio(val store: SketchStore) {
     fun syncTrack(i: Int) {
         val t = sketch.tracks.getOrNull(i) ?: return
         NativeEngine.setTrack(i, t.type.code, t.sound, t.volume, t.pan, t.mute, t.solo)
+        NativeEngine.setTrackSampleKit(i, if (t.type == TrackType.DRUMS) kits.slotOf(t.kitId) else -1)
+        NativeEngine.setTrackWarmth(i, if (t.type == TrackType.AUDIO) 0f else t.warmth)
     }
     fun syncClip(t: Int, s: Int) {
         val track = sketch.tracks.getOrNull(t) ?: return
@@ -82,7 +90,8 @@ class Studio(val store: SketchStore) {
         if (sketch.tracks.size >= MAX_TRACKS) { message = "8 tracks is the most a sketch can have"; return }
         val n = sketch.tracks.count { it.type == type } + 1
         val name = when (type) { TrackType.DRUMS -> "Drums $n"; TrackType.KEYS -> "Keys $n"; TrackType.AUDIO -> "Audio $n" }
-        sketch.tracks += Track(name, type, 0, 0.8f, colour = TRACK_COLOURS[sketch.tracks.size % TRACK_COLOURS.size])
+        sketch.tracks += Track(name, type, 0, 0.8f, colour = TRACK_COLOURS[sketch.tracks.size % TRACK_COLOURS.size],
+            kitId = if (type == TrackType.DRUMS) DEFAULT_KIT else null, warmth = if (type == TrackType.AUDIO) 0f else 0.3f)
         selectedTrack = sketch.tracks.size - 1
         syncTrack(selectedTrack)
         changed()

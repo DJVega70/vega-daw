@@ -750,11 +750,16 @@ int main()
         writeTone ("vega_vox.wav", 330.0, 60.0 / 124.0 * 8.0).moveFileTo (tmp.getChildFile ("audio/vox.wav"));
         writeTone ("vega_r0.wav", 60.0, 60.0 / 124.0 * 4.0).moveFileTo (tmp.getChildFile ("renders/t0s0.wav"));
         writeTone ("vega_r1.wav", 220.0, 60.0 / 124.0 * 8.0).moveFileTo (tmp.getChildFile ("renders/t1s0.wav"));
+        // the drum track's sample kit rides along (the bundled 808: kick and clap)
+        const auto kitSrc = juce::File (__FILE__).getParentDirectory().getSiblingFile ("android/app/src/main/assets/kits/vintage808");
+        tmp.getChildFile ("kits/vintage808").createDirectory();
+        for (auto n : { "36.wav", "39.wav" }) kitSrc.getChildFile (n).copyFileTo (tmp.getChildFile ("kits/vintage808").getChildFile (n));
         tmp.getChildFile ("sketch.json").replaceWithText (R"({
           "format": "vega-sketch", "version": 1, "name": "Sunday Groove", "bpm": 124.0, "beatsPerBar": 4,
           "scenes": ["Intro", "Drop", "Scene 3", "Scene 4", "Scene 5", "Scene 6", "Scene 7", "Scene 8"],
           "tracks": [
-            { "name": "Drums", "type": "drums", "sound": 0, "volume": 0.85, "pan": 0, "colour": "#FFA25E",
+            { "name": "Drums", "type": "drums", "sound": 0, "volume": 0.85, "pan": 0, "colour": "#FFA25E", "kitId": "vintage808",
+              "kit": { "id": "vintage808", "name": "Vintage 808", "pads": [ { "note": 36, "name": "Kick", "file": "kits/vintage808/36.wav" }, { "note": 39, "name": "Clap", "file": "kits/vintage808/39.wav" } ] },
               "clips": [ { "scene": 0, "name": "Beat 1", "bars": 1, "lengthBeats": 4.0, "notes": [[36,0,0.25,110],[39,1,0.25,100],[36,2,0.25,110],[39,3,0.25,100]], "render": "renders/t0s0.wav" },
                          { "scene": 1, "name": "Beat 2", "bars": 1, "lengthBeats": 4.0, "notes": [[36,0,0.25,110],[42,0.5,0.25,90]] } ] },
             { "name": "Keys", "type": "keys", "sound": 0, "volume": 0.7, "pan": -0.2, "colour": "#6FB7FF",
@@ -782,6 +787,12 @@ int main()
         check (beat != nullptr && beat->getSequence().getNumNotes() == 4 && beat->getName() == "Beat 1", "drum clip in scene 1 with its 4 hits");
         check (vox != nullptr && dynamic_cast<te::WaveAudioClip*> (DawSession::slotClip (*vox, 1)) != nullptr, "the vocal take in scene 2");
         check (drumsPrint != nullptr && drumsPrint->isMuted (false), "phone audio of the drums imported, muted (desktop instruments play)");
+        {
+            te::SamplerPlugin* sp = drumsMidi != nullptr ? dynamic_cast<te::SamplerPlugin*> (drumsMidi->pluginList[0]) : nullptr;
+            check (sp != nullptr && sp->getNumSounds() == 2 && sp->getKeyNote (0) == 36 && sp->getMinKey (1) == 39 && sp->getMaxKey (1) == 39 && sp->isSoundOpenEnded (0),
+                   "the phone's 808 kit is loaded into a Sampler, one pad per note (" + juce::String (sp != nullptr ? sp->getNumSounds() : -1) + " sounds)");
+            check (r.kits == 1, "the import reports the kit");
+        }
         auto* sc0 = ps.edit().getSceneList().getScenes()[0];
         check (sc0 != nullptr && sc0->name.get() == "Intro", "scene names come across");
         // arrangement: Intro (2 bars, the longest clip) then Drop (2 bars, the vocal) with markers

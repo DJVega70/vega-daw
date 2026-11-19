@@ -56,7 +56,8 @@ fun VegaTheme(content: @Composable () -> Unit) {
 enum class Tab(val label: String) { SONG("Song"), BEATS("Beats"), KEYS("Keys"), RECORD("Record") }
 
 @Composable
-fun VegaSketchApp(studio: Studio, withMic: (() -> Unit) -> Unit, onExport: () -> Unit, onSaveToDownloads: () -> Unit) {
+fun VegaSketchApp(studio: Studio, withMic: (() -> Unit) -> Unit, onExport: () -> Unit, onSaveToDownloads: () -> Unit,
+                  onImportKit: () -> Unit, onPickPadSound: (track: Int, note: Int) -> Unit) {
     var tab by remember { mutableStateOf(Tab.SONG) }
     LaunchedEffect(Unit) { while (true) { studio.poll(); delay(33) } }
     val snack = remember { SnackbarHostState() }
@@ -80,7 +81,7 @@ fun VegaSketchApp(studio: Studio, withMic: (() -> Unit) -> Unit, onExport: () ->
             key(studio.version) { }   // read so every change redraws
             when (tab) {
                 Tab.SONG -> SongScreen(studio, onEdit = { tab = it })
-                Tab.BEATS -> BeatsScreen(studio)
+                Tab.BEATS -> BeatsScreen(studio, onImportKit, onPickPadSound)
                 Tab.KEYS -> KeysScreen(studio)
                 Tab.RECORD -> RecordScreen(studio, withMic)
             }
@@ -243,7 +244,7 @@ fun SongScreen(studio: Studio, onEdit: (Tab) -> Unit) {
                             Box(Modifier.fillMaxWidth().height(4.dp).background(Color(t.colour)))
                             Column(Modifier.padding(6.dp, 8.dp, 6.dp, 4.dp)) {
                                 Text(t.name, color = TextHi, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(t.soundName + if (t.mute) "  MUTED" else if (t.solo) "  SOLO" else "", color = if (t.mute) RecRed else TextDim, fontSize = 10.sp, maxLines = 1)
+                                Text(studio.soundName(t) + if (t.mute) "  MUTED" else if (t.solo) "  SOLO" else "", color = if (t.mute) RecRed else TextDim, fontSize = 10.sp, maxLines = 1)
                                 LinearProgressIndicator(progress = { studio.level(ti).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(3.dp), color = Color(t.colour), trackColor = Navy)
                             }
                             if (trackMenu == ti) TrackMenu(studio, ti, onEdit) { trackMenu = -1 }
@@ -309,9 +310,17 @@ fun TrackMenu(studio: Studio, ti: Int, onEdit: (Tab) -> Unit, onDismiss: () -> U
         DropdownMenuItem(text = { Text("Volume / pan...") }, onClick = { volume = true })
         DropdownMenuItem(text = { Text(if (t.mute) "Unmute" else "Mute") }, onClick = { studio.updateTrack(ti) { mute = !mute }; onDismiss() })
         DropdownMenuItem(text = { Text(if (t.solo) "Unsolo" else "Solo") }, onClick = { studio.updateTrack(ti) { solo = !solo }; onDismiss() })
-        if (t.type != TrackType.AUDIO) {
+        if (t.type == TrackType.DRUMS) {
             HorizontalDivider()
-            (if (t.type == TrackType.DRUMS) KIT_NAMES else PRESET_NAMES).forEachIndexed { i, n ->
+            studio.kits.kits.forEach { k ->
+                DropdownMenuItem(text = { Text(k.name, color = if (t.kitId == k.id) Gold else TextHi) }, onClick = { studio.updateTrack(ti) { kitId = k.id }; onDismiss() })
+            }
+            KIT_NAMES.forEachIndexed { i, n ->
+                DropdownMenuItem(text = { Text("$n (synth)", color = if (t.kitId == null && t.sound == i) Gold else TextHi) }, onClick = { studio.updateTrack(ti) { kitId = null; sound = i }; onDismiss() })
+            }
+        } else if (t.type == TrackType.KEYS) {
+            HorizontalDivider()
+            PRESET_NAMES.forEachIndexed { i, n ->
                 DropdownMenuItem(text = { Text(n, color = if (t.sound == i) Gold else TextHi) }, onClick = { studio.updateTrack(ti) { sound = i }; onDismiss() })
             }
         }
@@ -404,7 +413,19 @@ fun TrackAndSlotBar(studio: Studio, type: TrackType): Int? {
 
 // ---------------------------------------------------------------- BEATS: pads + step sequencer
 @Composable
-fun BeatsScreen(studio: Studio) {
+fun WarmthRow(studio: Studio, ti: Int) {
+    val t = studio.sketch.tracks.getOrNull(ti) ?: return
+    var w by remember(ti, t.warmth) { mutableFloatStateOf(t.warmth) }
+    Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("WARMTH", color = Gold, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(62.dp))
+        Slider(w, { w = it; studio.updateTrack(ti) { warmth = it } }, valueRange = 0f..1f, modifier = Modifier.weight(1f))
+        Text(when { w < 0.05f -> "Clean"; w < 0.35f -> "Warm"; w < 0.7f -> "Tape"; else -> "Saturated" }, color = TextDim, fontSize = 11.sp, modifier = Modifier.width(64.dp), textAlign = TextAlign.End)
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun BeatsScreen(studio: Studio, onImportKit: () -> Unit, onPickPadSound: (Int, Int) -> Unit) {
     val v = studio.version
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         val ti = TrackAndSlotBar(studio, TrackType.DRUMS) ?: return@Column
@@ -416,12 +437,20 @@ fun BeatsScreen(studio: Studio) {
         val bars = clip?.bars ?: 1
         if (page >= bars) page = 0
         val lit = remember { mutableStateMapOf<Int, Boolean>() }
-        // kit
-        Row(Modifier.horizontalScroll(rememberScrollState()).padding(8.dp, 6.dp)) {
-            KIT_NAMES.forEachIndexed { i, n ->
-                FilterChip(selected = t.sound == i, onClick = { studio.updateTrack(ti) { sound = i } }, label = { Text(n, fontSize = 12.sp) }, modifier = Modifier.padding(end = 6.dp))
+        // kit: the recorded vintage machines (and yours), then the synthesized ones
+        Row(Modifier.horizontalScroll(rememberScrollState()).padding(8.dp, 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            studio.kits.kits.forEach { k ->
+                FilterChip(selected = t.kitId == k.id, onClick = { studio.updateTrack(ti) { kitId = k.id } }, label = { Text(k.name, fontSize = 12.sp) },
+                    leadingIcon = if (!k.builtIn) { { Icon(Icons.Filled.Person, null, Modifier.size(14.dp)) } } else null, modifier = Modifier.padding(end = 6.dp))
             }
+            KIT_NAMES.forEachIndexed { i, n ->
+                FilterChip(selected = t.kitId == null && t.sound == i, onClick = { studio.updateTrack(ti) { kitId = null; sound = i } }, label = { Text("$n (synth)", fontSize = 12.sp) }, modifier = Modifier.padding(end = 6.dp))
+            }
+            OutlinedButton(onClick = onImportKit) { Icon(Icons.Filled.Add, null, Modifier.size(16.dp)); Text(" Import kit", fontSize = 12.sp) }
         }
+        studio.kits.kit(t.kitId)?.let { k -> if (k.credit.isNotEmpty() && k.builtIn) Text(k.credit, color = TextDim, fontSize = 9.sp, modifier = Modifier.padding(horizontal = 12.dp), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        WarmthRow(studio, ti)
+        var padMenu by remember { mutableStateOf(-1) }
         // pads
         Column(Modifier.padding(horizontal = 8.dp)) {
             for (row in 0 until 4) Row {
@@ -433,7 +462,7 @@ fun BeatsScreen(studio: Studio) {
                         .background(if (on) Gold else Color(t.colour).copy(alpha = if (sel) 0.55f else 0.25f))
                         .border(if (sel) 2.dp else 0.dp, if (sel) Gold else Color.Transparent, RoundedCornerShape(10.dp))
                         .pointerInput(note, ti) {
-                            detectTapGestures(onPress = { pos ->
+                            detectTapGestures(onLongPress = { padMenu = note }, onPress = { pos ->
                                 // harder near the top of the pad
                                 val vel = (127 - (pos.y / size.height) * 60).toInt().coerceIn(60, 127)
                                 studio.noteOn(ti, note, vel); lit[note] = true; selectedPad = note
@@ -441,7 +470,15 @@ fun BeatsScreen(studio: Studio) {
                                 studio.noteOff(ti, note); lit[note] = false
                             })
                         }, contentAlignment = Alignment.BottomStart) {
-                        Text(PAD_NAMES[note] ?: "", color = if (on) Navy else TextHi, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(6.dp))
+                        Text(studio.kits.padName(t.kitId, note), color = if (on) Navy else TextHi, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(6.dp))
+                        if (padMenu == note) DropdownMenu(expanded = true, onDismissRequest = { padMenu = -1 }) {
+                            DropdownMenuItem(text = { Text("Load a sound for this pad...") }, leadingIcon = { Icon(Icons.Filled.LibraryMusic, null) },
+                                onClick = { padMenu = -1; onPickPadSound(ti, note) })
+                            studio.kits.kit(t.kitId)?.let { k ->
+                                if (!k.builtIn) DropdownMenuItem(text = { Text("Delete the kit \"${k.name}\"", color = RecRed) }, onClick = {
+                                    padMenu = -1; studio.kits.delete(k); studio.updateTrack(ti) { kitId = DEFAULT_KIT } })
+                            }
+                        }
                     }
                 }
             }
@@ -452,7 +489,7 @@ fun BeatsScreen(studio: Studio) {
         val playingHere = studio.playingScene(ti) == sc
         val nowStep = if (playingHere) floor(studio.progress(ti) * bars * stepsPerBar).toInt() else -1
         Row(Modifier.padding(start = 10.dp, end = 10.dp, top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("STEPS: ${PAD_NAMES[selectedPad]}", color = Gold, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Text("STEPS: ${studio.kits.padName(t.kitId, selectedPad)}", color = Gold, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
             if (bars > 1) for (p in 0 until bars) {
                 Text(" ${p + 1} ", color = if (p == page) Navy else TextHi, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp).clip(RoundedCornerShape(4.dp))
                     .background(if (p == page) Gold else PanelHi).clickable { page = p }.padding(horizontal = 6.dp, vertical = 2.dp))
@@ -474,7 +511,7 @@ fun BeatsScreen(studio: Studio) {
         Column(Modifier.padding(horizontal = 8.dp)) {
             PAD_NOTES.forEach { note ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(PAD_NAMES[note] ?: "", color = if (note == selectedPad) Gold else TextDim, fontSize = 9.sp, modifier = Modifier.width(62.dp).clickable { selectedPad = note })
+                    Text(studio.kits.padName(t.kitId, note), color = if (note == selectedPad) Gold else TextDim, fontSize = 9.sp, maxLines = 1, modifier = Modifier.width(62.dp).clickable { selectedPad = note })
                     for (k in 0 until stepsPerBar) {
                         val step = page * stepsPerBar + k
                         val on = studio.hasStep(clip, note, step)
@@ -484,7 +521,7 @@ fun BeatsScreen(studio: Studio) {
                 }
             }
         }
-        Text("Hit the pads to play. Press record (top) to record your playing into the selected slot - it loops and adds each pass. Or tap the steps.",
+        Text("Hit the pads to play. Press record (top) to record your playing into the selected slot - it loops and adds each pass. Or tap the steps. Long-press a pad to load your own sound onto it; Import kit takes a .zip sample pack or WAVs from your phone.",
             color = TextDim, fontSize = 11.sp, modifier = Modifier.padding(12.dp))
         v.hashCode()
     }
@@ -532,6 +569,7 @@ fun KeysScreen(studio: Studio) {
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(8.dp, 6.dp)) {
             PRESET_NAMES.forEachIndexed { i, n -> FilterChip(selected = t.sound == i, onClick = { studio.updateTrack(ti) { sound = i } }, label = { Text(n, fontSize = 12.sp) }, modifier = Modifier.padding(end = 6.dp)) }
         }
+        WarmthRow(studio, ti)
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             var keyMenu by remember { mutableStateOf(false) }
             Box {

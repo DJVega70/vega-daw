@@ -1122,7 +1122,29 @@ DawSession::SketchResult DawSession::importSketch (const juce::File& file, const
             auto* t = addTrack (TrackKind::midi, name);
             if (t == nullptr) continue;
             const bool drums = type == "drums";
-            if (auto* d = findPlugin (drums ? "Vega Productions Drums" : "Vega Productions Multisynth")) setInstrument (*t, te::ExternalPlugin::xmlTypeName, d);
+            const auto kit = tv.getProperty ("kit", {});
+            bool kitLoaded = false;
+            if (drums && kit.isObject())
+            {
+                // the phone's sample kit (808, LinnDrum, ... or the user's own) travels in the export:
+                // load the same one-shots into a sampler, one pad per note, playing to their end like a drum machine
+                if (auto p = setInstrument (*t, te::SamplerPlugin::xmlTypeName))
+                    if (auto* sp = dynamic_cast<te::SamplerPlugin*> (p.get()))
+                        if (auto* pads = kit.getProperty ("pads", {}).getArray())
+                            for (auto& pv : *pads)
+                            {
+                                const auto f = dir.getChildFile (pv.getProperty ("file", {}).toString());
+                                const int note = juce::jlimit (0, 127, (int) pv.getProperty ("note", 36));
+                                if (! f.existsAsFile() || sp->addSound (f.getFullPathName(), pv.getProperty ("name", "Pad").toString(), 0.0, 0.0, 0.0f).isNotEmpty()) continue;
+                                const int i = sp->getNumSounds() - 1;
+                                sp->setSoundParams (i, note, note, note);
+                                sp->setSoundOpenEnded (i, true);
+                                kitLoaded = true;
+                            }
+                if (kitLoaded) ++res.kits;
+            }
+            if (! kitLoaded)
+                if (auto* d = findPlugin (drums ? "Vega Productions Drums" : "Vega Productions Multisynth")) setInstrument (*t, te::ExternalPlugin::xmlTypeName, d);
             setup (t, false);
             if (clips != nullptr)
                 for (auto& cv : *clips)
@@ -1171,6 +1193,7 @@ DawSession::SketchResult DawSession::importSketch (const juce::File& file, const
         }
     }
     res.ok = res.clips > 0 || res.tracks > 0;
-    res.message = "Imported \"" + res.name + "\": " + juce::String (res.tracks) + " tracks, " + juce::String (res.clips) + " clips.";
+    res.message = "Imported \"" + res.name + "\": " + juce::String (res.tracks) + " tracks, " + juce::String (res.clips) + " clips."
+                  + (res.kits > 0 ? " Drum kits loaded into the Sampler: " + juce::String (res.kits) + "." : juce::String());
     return res;
 }

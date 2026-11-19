@@ -165,7 +165,11 @@ A companion app for getting ideas down on your phone, then finishing them in the
   - Double-tap a clip to edit it; long-press for its length, duplicate, delete and rename.
   - Add Drums, Keys or Audio tracks (up to 8).
 - **Beats**
-  - 16 drum pads in 5 synthesized kits: House Classic, Vega 808, Vega 909, Deep Soul and Lo-Fi Dusty.
+  - 16 drum pads. The default kits are recordings of real vintage machines: **Vintage 808**, **LinnDrum**, **CR-78 Soul** and **TR-707 House** (credits in `android/app/src/main/assets/kits/CREDITS.txt`).
+  - The 5 synthesized kits are still there, marked "(synth)": House Classic, Vega 808, Vega 909, Deep Soul and Lo-Fi Dusty.
+  - **Warmth** (on Beats and Keys): tape-style saturation that rounds off the top end and thickens the low end. Clean → Warm → Tape → Saturated. It doesn't make things louder.
+  - **Import kit**: pick a `.zip` sample pack or a handful of WAVs. Sounds are put on pads by their names (kick, snare, clap, hat, open hat, tom, rim, crash, ride, cowbell...).
+  - **Long-press a pad** to load any WAV onto just that pad. On a bundled kit this makes your own copy, so the original stays as it was.
   - A step sequencer for the selected pad, plus a grid of every sound that you can tap too.
 - **Keys**
   - 8 synth sounds: Soul Keys (electric piano), Warm Pad, Deep Bass, House Organ, Pluck, Strings, Bright Lead and Garage Bass.
@@ -183,10 +187,16 @@ A companion app for getting ideas down on your phone, then finishing them in the
 1. ⋮ > **Send to desktop**. Use Quick Share to your PC, Google Drive or email. Or use **Save to Downloads** and copy it over USB.
 2. In the DAW, choose **File > Import phone sketch** and pick the `.vegasketch` file.
 3. Choose the sounds:
-   - **Desktop instruments**: drums and keys come in as MIDI on Vega Productions Drums / Multisynth if they're installed (4OSC if not).
+   - **Desktop instruments**: drums and keys come in as MIDI. Drums that use a sample kit get that same kit loaded into the Sampler, one sound per pad. Synth-kit drums and keys use Vega Productions Drums / Multisynth if they're installed (4OSC if not).
    - **Phone sounds**: drums and keys come in as audio that sounds exactly like the phone.
    - **Both**: you get both, with the phone audio muted underneath.
 4. Clips land in the clip launcher, with the same scenes, names, colours and tempo. The scenes are also laid out in the arrangement, with a marker for each one.
+
+### Free drum sounds from the web
+Any one-shot WAV pack works with **Import kit**. Good free places to look:
+- **oramics/sampled** and **machines.hyperreal.org**: classic drum machines (808, 909, LinnDrum, DMX, CR-78...).
+- **Bedroom Producers Blog** free packs (e.g. *Cassette 909*), **Samples From Mars** freebies and **99Sounds**.
+Check each pack's licence. Most allow use in your own music; that's all importing needs.
 
 ## Controllers: Akai APC Key 25 mk2
 The DAW has a built-in script for the APC Key 25 mk2. It is laid out like Ableton's script, and the pads drive the clip launcher.

@@ -141,6 +141,34 @@ int main (int argc, char** argv)
         check (l.size() == expect && peakOf (l) > 0.05f, "offline render of a 2-bar keys clip, twice (" + std::to_string (l.size()) + " frames)");
         writeWav (dir + "/sketch_keys_print.wav", l, r, 48000);
     }
+    // sample kits (the bundled vintage machines) and warmth
+    {
+        const std::string kits = argc > 2 ? argv[2] : "../../main/assets/kits";
+        SketchEngine e; e.prepare (48000); e.setTempo (120);
+        std::vector<int> notes { 36, 38, 39, 42, 46 };
+        std::vector<std::string> paths;
+        for (int n : notes) paths.push_back (kits + "/linndrum/" + std::to_string (n) + ".wav");
+        check (e.loadSampleKit (0, notes, paths), "LinnDrum kit loads (44.1 kHz WAVs resampled to 48 kHz)");
+        e.setTrack (0, TrackType::drums, 0, 1.0f, 0.0f, false, false);
+        e.setTrackSampleKit (0, 0);
+        e.setClipNotes (0, 0, 4.0, { { 36, 0, 0.25, 120 }, { 38, 1, 0.25, 120 }, { 42, 2, 0.25, 100 }, { 39, 3, 0.25, 110 } });
+        e.launchClip (0, 0);
+        std::vector<float> l, r; run (e, 2.0, &l, &r);
+        bool all = true;
+        for (int b = 0; b < 4; ++b) if (peakOf (l, (size_t) (b * 24000), (size_t) (b * 24000 + 2400)) < 0.1f) all = false;
+        check (all, "the sample kit plays all four hits");
+        writeWav (dir + "/sketch_linndrum.wav", l, r, 48000);
+        // warmth darkens the top end: compare high-frequency energy of the hat
+        auto hiEnergy = [] (const std::vector<float>& v, size_t a, size_t b) { double e2 = 0; for (size_t i = a + 1; i < b && i < v.size(); ++i) { const double d = v[i] - v[i - 1]; e2 += d * d; } return e2; };
+        const double cleanHi = hiEnergy (l, 48000, 60000);
+        e.stop(); e.setTrackWarmth (0, 1.0f); e.launchClip (0, 0);
+        std::vector<float> l2, r2; run (e, 2.0, &l2, &r2);
+        const double warmHi = hiEnergy (l2, 48000, 60000);
+        check (warmHi < cleanHi * 0.8 && peakOf (l2) > 0.1f, "warmth softens the highs (" + std::to_string (warmHi / cleanHi) + "x)");
+        writeWav (dir + "/sketch_linndrum_warm.wav", l2, r2, 48000);
+        std::vector<float> ol, orr; e.renderClipOffline (0, 0, 1, ol, orr);
+        check (peakOf (ol, 0, 2400) > 0.1f, "offline print uses the sample kit");
+    }
     std::printf (failures == 0 ? "ALL PASSED\n" : "FAILURES: %d\n", failures);
     return failures == 0 ? 0 : 1;
 }
