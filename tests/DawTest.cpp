@@ -739,6 +739,20 @@ int main()
         note (0x21);                                                       // pad with the clip: launch (no audio device - mustn't crash)
         note (0x51); note (0x62); note (0x51); note (0x62, false);
         check (! syn->playSlotClips.get(), "APC: Shift + Stop All Clips = back to arrangement");
+        {
+            int recScene = -1; te::AudioTrack* recTrack = nullptr; bool stopped = false;
+            apc.onRecordSlot = [&] (te::AudioTrack& t, int sc) { recTrack = &t; recScene = sc; return true; };
+            apc.isRecordingSlot = [&] (te::AudioTrack& t, int sc) { return &t == recTrack && sc == recScene && ! stopped; };
+            apc.onStopSlotRecording = [&] { stopped = true; };
+            note (25); note (25, false);                                    // row 2, column 2: an empty slot on the synth
+            check (recTrack == syn && recScene == 1, "APC: a pad on an empty instrument slot records a new clip there");
+            sent.clear(); apc.updateFeedback();
+            bool redPad = false; for (auto& m : sent) if (m.isNoteOn() && m.getNoteNumber() == 25 && m.getChannel() == 14 && m.getVelocity() == 5) redPad = true;
+            check (redPad, "APC: the recording slot's pad flashes red");
+            note (25); note (25, false);
+            check (stopped, "APC: pressing it again stops the recording");
+            apc.onRecordSlot = nullptr; apc.isRecordingSlot = nullptr; apc.onStopSlotRecording = nullptr;
+        }
         note (0x62); note (0x5d); note (0x62, false);                       // shift + record = drum pads
         sent.clear();
         note (0); apc.updateFeedback(); note (0, false);

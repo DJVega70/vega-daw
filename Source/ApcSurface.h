@@ -6,7 +6,8 @@
     selected instrument track like any keyboard). Pure logic: feed it MIDI on the message thread and it
     calls `send` with LED feedback. Laid out like the Ableton script, but driving the DAW's clip launcher.
 
-      5 x 8 pads           clip launcher: launch a clip (an empty slot stops that track).
+      5 x 8 pads           clip launcher: launch a clip. An empty slot on an instrument (or armed) track records a new clip;
+                           press it again to stop recording and play it. Other empty slots stop that track.
                            Shift + pad selects the clip (opens it in the editor with a double tap).
       Scene buttons        launch the scene row. Shift + scene button = soft-key mode for the 8 track
                            buttons: CLIP STOP / SOLO / MUTE / REC ARM / SELECT.
@@ -27,6 +28,9 @@ public:
     std::function<void (const juce::MidiMessage&)> send;
     std::function<void (te::AudioTrack*)> onSelectTrack;
     std::function<void (te::Clip*)> onSelectClip, onOpenClip;
+    // empty slot on an instrument (or armed) track: record a new clip into it; press it again to stop and play it
+    std::function<bool (te::AudioTrack&, int scene)> onRecordSlot, isRecordingSlot;
+    std::function<void()> onStopSlotRecording;
     std::function<void()> onWindowMoved;                     // the 8 x 5 box moved (the session view draws it)
 
     void handleIncoming (const juce::MidiMessage&);

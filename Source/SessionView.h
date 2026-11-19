@@ -197,6 +197,10 @@ public:
         repaint();
     }
 
+    // for the APC: record into an empty slot / stop that recording
+    bool startSlotRecording (te::AudioTrack& t, int sIdx) { recordIntoSlot (t, sIdx); return recording.started; }
+    bool isRecordingSlot (te::AudioTrack& t, int sIdx) const { return recording.started && recording.track == t.itemID && recording.scene == sIdx; }
+    void stopSlotRecording() { if (recording.started) vs.edit().getTransport().stop (false, false); }
 private:
     static constexpr int topH = 40, headH = 40, footH = 30, colW = 132, rowH = 30, sceneW = 140;
     juce::Rectangle<int> gridArea() const { return { 8, topH + headH, getWidth() - sceneW - 16, getHeight() - topH - headH - footH - 4 }; }

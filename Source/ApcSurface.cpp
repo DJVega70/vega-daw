@@ -113,8 +113,12 @@ void ApcSurface::pad (int row, int col)
         lastPadTapped = id; lastPadTap = now;
         return;
     }
-    if (clip != nullptr) s.launchClip (*clip);
-    else s.stopTrackSlots (*t);
+    if (isRecordingSlot && isRecordingSlot (*t, scene)) { if (onStopSlotRecording) onStopSlotRecording(); return; }
+    if (clip != nullptr) { s.launchClip (*clip); return; }
+    bool armed = false;
+    for (auto* in : t->edit.getAllInputDevices()) if (te::isOnTargetTrack (*in, *t, 0) && in->isRecordingEnabled (t->itemID)) armed = true;
+    if ((armed || DawSession::kindOf (*t) == DawSession::TrackKind::midi) && onRecordSlot && onRecordSlot (*t, scene)) return;
+    s.stopTrackSlots (*t);
 }
 
 void ApcSurface::sceneButton (int i)
@@ -281,7 +285,8 @@ void ApcSurface::updateFeedback (bool forceAll)
             int chan = 0, colour = 0;                                       // behaviour channel (brightness), palette colour
             if (t != nullptr)
             {
-                if (auto* c = DawSession::slotClip (*t, sceneOffset + row))
+                if (isRecordingSlot && isRecordingSlot (*t, sceneOffset + row)) { chan = 13; colour = 5; rowQueued[(size_t) row] = true; }   // the pad blinks red by itself (behaviour channel 14)
+                else if (auto* c = DawSession::slotClip (*t, sceneOffset + row))
                 {
                     const bool playing = DawSession::isSlotPlaying (*c), queued = DawSession::isSlotQueued (*c);
                     if (playing) rowPlaying[(size_t) row] = true;

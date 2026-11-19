@@ -206,7 +206,7 @@ The DAW has a built-in script for the APC Key 25 mk2. It is laid out like Ableto
 
 | APC Key 25 mk2 | Vega Productions DAW |
 |---|---|
-| 5 x 8 pads | Clip launcher slots. The red box in the SESSION view shows which ones. A press launches a clip; an empty slot stops that track. The pads light up in the track colour, bright green while playing, and blink while queued. |
+| 5 x 8 pads | Clip launcher slots. The red box in the SESSION view shows which ones. A press launches a clip. An empty slot on an instrument track (or an armed audio track) **records a new clip** there, with its pad blinking red; press it again to stop and the new clip starts looping. Other empty slots stop that track. The pads light up in the track colour, bright green while playing, and blink while queued. |
 | Shift + pad | Select the clip. Shift + double-tap opens it in the piano roll or step editor. |
 | Scene buttons (Clip Stop ... Select) | Launch the scene row |
 | Shift + scene button | Pick the soft-key mode for the 8 buttons under the pads: **Clip Stop / Solo / Mute / Rec Arm / Select** |

@@ -165,6 +165,9 @@ public:
         vs.onSelectionChanged = [this] { hub.surface.selectedID = vs.selectedTrack; apc.surface.selectedID = vs.selectedTrack; routeMidiToSelectedTrack(); arrange.repaint(); };
         apc.surface.onSelectTrack = [this] (te::AudioTrack* t) { vs.selectTrack (t); };
         apc.surface.onSelectClip = [this] (te::Clip* c) { vs.selectClip (c); };
+        apc.surface.onRecordSlot = [this] (te::AudioTrack& t, int sc) { vs.selectTrack (&t); return launcher.startSlotRecording (t, sc); };
+        apc.surface.isRecordingSlot = [this] (te::AudioTrack& t, int sc) { return launcher.isRecordingSlot (t, sc); };
+        apc.surface.onStopSlotRecording = [this] { launcher.stopSlotRecording(); };
         apc.surface.onOpenClip = [this] (te::Clip* c) { vs.selectClip (c); if (dynamic_cast<te::MidiClip*> (c) != nullptr || dynamic_cast<te::StepClip*> (c) != nullptr) showPianoRoll (true); };
         vs.controllerWindow = [this]
         {
