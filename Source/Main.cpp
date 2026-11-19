@@ -385,8 +385,14 @@ private:
     {
         updateTitle();
         if (++autosaveTicks >= 2 * 120) { autosaveTicks = 0; autosave(); }      // every 2 minutes
+        // a keyboard / controller plugged in (or out) while running: enable its keys and point them at the selected instrument
+        juce::StringArray names;
+        for (auto& d : engine.getDeviceManager().getMidiInDevices()) names.add (d->getName());
+        const auto sig = names.joinIntoString ("|");
+        if (sig != midiInputsSeen) { const bool first = midiInputsSeen.isEmpty(); midiInputsSeen = sig; if (! first) setupInputs(); }
     }
     int autosaveTicks = 0;
+    juce::String midiInputsSeen;
     void updateTitle()
     {
         const auto f = session.getProjectFile();
@@ -661,8 +667,20 @@ private:
 
     void showApcSettings()
     {
+        setupInputs();
+        juce::String keys = "not found - check it's plugged in";
+        for (auto& d : engine.getDeviceManager().getMidiInDevices())
+            if (d->getName().containsIgnoreCase ("APC Key 25") && ! ApcHub::isApcControlPort (d->getName()))
+            {
+                juce::String target = "not connected to a track";
+                for (auto* in : session.edit().getAllInputDevices())
+                    if (&in->getInputDevice() == d.get())
+                        for (auto* t : session.getTracks()) if (te::isOnTargetTrack (*in, *t, 0)) target = "playing \"" + t->getName() + "\"";
+                keys = "\"" + d->getName() + "\" " + (d->isEnabled() ? "on, " + target : juce::String ("switched OFF in Audio / MIDI settings"));
+            }
         auto* w = new juce::AlertWindow ("Akai APC Key 25 mk2",
-            juce::String ("Status: ") + (apc.isConnected() ? "connected to " + apc.inputName : juce::String ("not connected")) + "\n\n"
+            juce::String ("Pads / knobs: ") + (apc.isConnected() ? "connected to " + apc.inputName : juce::String ("not connected")) + "\n"
+            "Keys: " + keys + "\n\n"
             "Pads launch the clip launcher's clips (the box in the SESSION view shows which 8 x 5). Scene buttons launch scenes; "
             "Shift + scene button picks what the 8 track buttons do (Clip Stop / Solo / Mute / Rec Arm / Select). "
             "Shift + arrows move the box, Shift + Volume / Pan / Send / Device pick what the knobs do. "
