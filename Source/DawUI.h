@@ -13,6 +13,7 @@ struct ViewState
     bool followPlayhead = true;
     std::function<void()> onSelectionChanged, onOpenPianoRoll, onShowSession, onShowSongMap;
     std::function<bool (const juce::var& dragDescription, te::AudioTrack* target)> onPluginDropped;
+    std::function<juce::Rectangle<int>()> controllerWindow;       // tracks x scenes a launcher controller shows (empty = none)
     std::function<void (te::WaveAudioClip*)> onSeparateClip;                                          // AI stem separation of an audio clip   // plug-in dragged from the browser
 
     te::Edit& edit() { return session.edit(); }

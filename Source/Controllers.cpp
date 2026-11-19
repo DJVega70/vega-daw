@@ -65,8 +65,8 @@ void ControllerHub::autoConnect (bool forceAuto)
     if (in.isEmpty() || ! hasIn (in))
     {
         in = {};
-        for (auto& d : ins) if (looksLikeDawPort (d.name) && (d.name.containsIgnoreCase ("FLkey") || d.name.containsIgnoreCase ("MIDIIN2"))) { in = d.name; break; }
-        if (in.isEmpty()) for (auto& d : ins) if (looksLikeDawPort (d.name)) { in = d.name; break; }
+        for (auto& d : ins) if (looksLikeDawPort (d.name) && ! ApcHub::isApcControlPort (d.name) && (d.name.containsIgnoreCase ("FLkey") || d.name.containsIgnoreCase ("MIDIIN2"))) { in = d.name; break; }
+        if (in.isEmpty()) for (auto& d : ins) if (looksLikeDawPort (d.name) && ! ApcHub::isApcControlPort (d.name)) { in = d.name; break; }
     }
     if (in.isEmpty()) return;
     if (out.isEmpty() || ! hasOut (out))
@@ -74,7 +74,7 @@ void ControllerHub::autoConnect (bool forceAuto)
         out = {};
         juce::String want = in.replace ("DAW Out", "DAW In").replace ("MIDIIN2", "MIDIOUT2");
         for (auto& d : outs) if (d.name == want) out = d.name;
-        if (out.isEmpty()) for (auto& d : outs) if (looksLikeDawPort (d.name)) { out = d.name; break; }
+        if (out.isEmpty()) for (auto& d : outs) if (looksLikeDawPort (d.name) && ! ApcHub::isApcControlPort (d.name)) { out = d.name; break; }
     }
     connect (in, out);
 }
@@ -167,4 +167,97 @@ void ControllerPanel::resized()
     status.setBounds (getWidth() - 274, 182, 258, 26);
     clearBtn.setBounds (getWidth() - 116, 216, 100, 22);
     monitor.setBounds (16, 242, getWidth() - 32, getHeight() - 258);
+}
+
+//==============================================================================
+ApcHub::ApcHub (te::Engine& e, DawSession& s) : surface (s), engine (e)
+{
+    surface.send = [this] (const juce::MidiMessage& m) { if (output) output->sendMessageNow (m); };
+    startTimer (50);
+}
+ApcHub::~ApcHub() { stopTimer(); surface.allOff(); connect ({}, {}); }
+
+juce::File ApcHub::settingsFile() const { return engine.getPropertyStorage().getAppPrefsFolder().getChildFile ("VegaApc.xml"); }
+
+bool ApcHub::isApcControlPort (const juce::String& n)
+{
+    if (! n.containsIgnoreCase ("APC Key 25")) return false;
+    return n.containsIgnoreCase ("MIDIIN2") || n.containsIgnoreCase ("MIDIOUT2") || n.containsIgnoreCase ("Control")
+        || n.containsIgnoreCase ("Port 2") || n.trimEnd().endsWithIgnoreCase (" C");
+}
+
+bool ApcHub::connect (const juce::String& inName, const juce::String& outName, bool userChoice)
+{
+    if (output) surface.allOff();
+    if (input) input->stop();
+    input.reset(); output.reset();
+    inputName = outputName = {};
+    surface.reset();
+    if (inName.isEmpty())
+    {
+        if (userChoice) { juce::XmlElement x ("VegaApc"); x.setAttribute ("off", 1); x.writeTo (settingsFile()); }
+        return false;
+    }
+    // Windows lets only one connection use a MIDI port: keep the engine off the control port
+    auto& dm = engine.getDeviceManager();
+    for (auto& d : dm.getMidiInDevices()) if (d->getName() == inName) d->setEnabled (false);
+    for (int i = 0; i < dm.getNumMidiOutDevices(); ++i) if (auto* d = dm.getMidiOutDevice (i)) if (d->getName() == outName) d->setEnabled (false);
+    for (auto& d : juce::MidiInput::getAvailableDevices()) if (d.name == inName) input = juce::MidiInput::openDevice (d.identifier, this);
+    for (auto& d : juce::MidiOutput::getAvailableDevices()) if (d.name == outName) output = juce::MidiOutput::openDevice (d.identifier);
+    if (input == nullptr) { log.add ("Couldn't open " + inName); return false; }
+    input->start();
+    inputName = inName; outputName = output ? outName : juce::String();
+    log.add ("Connected: " + inName + (output ? " / " + outName : juce::String (" (no lights: output not found)")));
+    if (userChoice) { juce::XmlElement x ("VegaApc"); x.setAttribute ("in", inName); x.setAttribute ("out", outName); x.writeTo (settingsFile()); }
+    if (output) output->sendMessageNow (ApcSurface::introduction());
+    surface.allOff();
+    surface.updateFeedback (true);
+    return true;
+}
+
+void ApcHub::autoConnect (bool forceAuto)
+{
+    juce::String in, out;
+    if (auto x = juce::XmlDocument::parse (settingsFile()))
+    {
+        if (x->getBoolAttribute ("off") && ! forceAuto) return;
+        in = x->getStringAttribute ("in"); out = x->getStringAttribute ("out");
+    }
+    auto ins = juce::MidiInput::getAvailableDevices(); auto outs = juce::MidiOutput::getAvailableDevices();
+    bool hasIn = false; for (auto& d : ins) if (d.name == in) hasIn = true;
+    if (! hasIn) { in = {}; for (auto& d : ins) if (isApcControlPort (d.name)) { in = d.name; break; } }
+    if (in.isEmpty()) return;
+    bool hasOut = false; for (auto& d : outs) if (d.name == out) hasOut = true;
+    if (! hasOut)
+    {
+        out = {};
+        const auto want = in.replace ("MIDIIN2", "MIDIOUT2");
+        for (auto& d : outs) if (d.name == want) out = d.name;
+        if (out.isEmpty()) for (auto& d : outs) if (isApcControlPort (d.name)) { out = d.name; break; }
+    }
+    connect (in, out);
+}
+
+void ApcHub::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m)
+{
+    { const juce::ScopedLock sl (lock); pending.push_back (m); }
+    triggerAsyncUpdate();
+}
+
+void ApcHub::handleAsyncUpdate()
+{
+    std::vector<juce::MidiMessage> msgs;
+    { const juce::ScopedLock sl (lock); msgs.swap (pending); }
+    for (auto& m : msgs)
+    {
+        log.add (surface.describe (m));
+        surface.handleIncoming (m);
+    }
+    while (log.size() > 200) log.remove (0);
+}
+
+void ApcHub::timerCallback()
+{
+    if (! isConnected()) { if (++ticks % 60 == 0) autoConnect(); return; }      // plugged in later: look every 3 s
+    surface.updateFeedback();
 }

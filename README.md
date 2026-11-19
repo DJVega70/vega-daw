@@ -148,6 +148,25 @@ The DAW has a built-in **HUI controller script**, the protocol the FLkey 2 uses 
 
 Feedback goes back to the controller: fader values, mute/solo/select/arm lights, encoder positions, 4-letter track names and transport lights.
 
+## Controllers: Akai APC Key 25 mk2
+The DAW has a built-in script for the APC Key 25 mk2. It is laid out like Ableton's script, and the pads drive the clip launcher.
+
+1. Plug it in. The DAW connects to the APC's **control port** by itself: `MIDIIN2 / MIDIOUT2 (APC Key 25 mk2)` on Windows, or `APC Key 25 mk2 Control` on Mac. To check the connection or pick the ports yourself, use **Options > Akai APC Key 25 mk2**.
+2. The keys, Sustain and Oct -/+ use the APC's main port and play whichever instrument track is selected.
+
+| APC Key 25 mk2 | Vega Productions DAW |
+|---|---|
+| 5 x 8 pads | Clip launcher slots. The red box in the SESSION view shows which ones. A press launches a clip; an empty slot stops that track. The pads light up in the track colour, bright green while playing, and blink while queued. |
+| Shift + pad | Select the clip. Shift + double-tap opens it in the piano roll or step editor. |
+| Scene buttons (Clip Stop ... Select) | Launch the scene row |
+| Shift + scene button | Pick the soft-key mode for the 8 buttons under the pads: **Clip Stop / Solo / Mute / Rec Arm / Select** |
+| ▲ ▼ ◀ ▶ Volume Pan Send Device | The soft-key action on the 8 tracks shown. In Mute mode a lit button means the track is playing. |
+| Shift + ▲ ▼ ◀ ▶ | Move the 8 x 5 box |
+| Shift + Volume / Pan / Send / Device | What the knobs control: track volume, pan, the send to the first bus, or the first 8 parameters of the selected track's plug-in |
+| K1-K8 | The 8 tracks shown (or the plug-in). Knob moves are recorded when WRITE is on. |
+| Stop All Clips | Stop the launcher. Shift + Stop All Clips goes back to the arrangement. |
+| ▶/II, ● | Play / stop and record. Shift + Play returns to the start. |
+
 ## Roadmap
 - **Stage 2:** ✅ HUI / FLkey 2 controller script. Next: automation lanes, MIDI-learn, Mackie Control (MCU), warp markers, track freeze.
 - **Stage 3:** ✅ routing matrix. **Stage 4:** ✅ clip launcher, comping, stems / formats export, bounce, folders, tempo map, CC lanes, step sequencer, autosave. Next: Ableton Push script, video.

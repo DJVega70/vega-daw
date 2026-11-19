@@ -1,5 +1,6 @@
 #include "../Source/DawSession.h"
 #include "../Source/HuiSurface.h"
+#include "../Source/ApcSurface.h"
 #include "../Source/StemSeparator.h"
 #include "../Source/StemClient.h"
 #include "../Source/DawUI.h"
@@ -700,6 +701,44 @@ int main()
             check (peakOf (o, engine) > 0.01f, "step clip plays the instrument (peak " + juce::String (peakOf (o, engine), 3) + ")");
             o.deleteFile();
         }
+    }
+    {   // ---- Akai APC Key 25 mk2 script
+        DawSession as (engine);
+        as.ensureScenes (8);
+        ApcSurface apc (as);
+        std::vector<juce::MidiMessage> sent;
+        apc.send = [&sent] (const juce::MidiMessage& m) { sent.push_back (m); };
+        auto* syn = as.getTracks (false)[1];
+        as.createSlotMidiClip (*syn, 0, 1);
+        apc.updateFeedback (true);
+        bool padLit = false;
+        for (auto& m : sent) if (m.isNoteOn() && m.getNoteNumber() == 33 && m.getChannel() == 3 && m.getVelocity() > 0) padLit = true;   // top row, column 2
+        check (padLit, "APC: a clip in scene 1 / track 2 lights the top-row pad (dim track colour)");
+        check (ApcSurface::nearestPaletteColour (juce::Colours::red) == 5 && ApcSurface::nearestPaletteColour (juce::Colour (0xff00ff00)) == 21
+               && ApcSurface::nearestPaletteColour (juce::Colours::white) == 3, "APC: track colours map to the pad palette");
+        sent.clear(); apc.updateFeedback();
+        check (sent.empty(), "APC: feedback only sends changes");
+        auto note = [&apc] (int n, bool down = true) { apc.handleIncoming (down ? juce::MidiMessage::noteOn (1, n, (juce::uint8) 127) : juce::MidiMessage::noteOff (1, n)); };
+        note (0x62); note (0x54); note (0x62, false);                       // shift + MUTE soft key
+        check (apc.softMode == ApcSurface::SoftMode::mute, "APC: Shift + scene 3 = mute mode");
+        note (0x41);
+        check (syn->isMuted (false), "APC: track button 2 mutes track 2");
+        note (0x41);
+        const float v0 = syn->getVolumePlugin()->getVolumeDb();
+        apc.handleIncoming (juce::MidiMessage::controllerEvent (1, 0x31, 10));
+        const float v1 = syn->getVolumePlugin()->getVolumeDb();
+        apc.handleIncoming (juce::MidiMessage::controllerEvent (1, 0x31, 128 - 20));
+        const float v2 = syn->getVolumePlugin()->getVolumeDb();
+        check (v1 > v0 && v2 < v1, "APC: knob 2 (relative) turns track 2's volume up and down (" + juce::String (v0, 1) + " > " + juce::String (v1, 1) + " > " + juce::String (v2, 1) + " dB)");
+        note (0x62); note (0x45); note (0x62, false);                       // shift + PAN
+        apc.handleIncoming (juce::MidiMessage::controllerEvent (1, 0x31, 20));
+        check (apc.knobMode == ApcSurface::KnobMode::pan && syn->getVolumePlugin()->getPan() > 0.05f, "APC: Shift + Pan, then a knob pans");
+        note (0x62); note (0x41); note (0x62, false);                       // shift + down arrow
+        check (apc.sceneOffset == 1, "APC: Shift + down moves the box a scene down");
+        note (0x62); note (0x40); note (0x62, false);
+        note (0x21);                                                       // pad with the clip: launch (no audio device - mustn't crash)
+        note (0x51); note (0x62); note (0x51); note (0x62, false);
+        check (! syn->playSlotClips.get(), "APC: Shift + Stop All Clips = back to arrangement");
     }
     out.deleteFile(); proj.deleteFile();
     std::cout << (fails == 0 ? "ALL PASSED" : "FAILURES: " + std::to_string (fails)) << "\n";

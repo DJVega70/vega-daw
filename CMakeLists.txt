@@ -34,6 +34,7 @@ target_sources(VegaDAW PRIVATE
     Source/PianoRoll.cpp
     Source/MixerView.cpp
     Source/HuiSurface.cpp
+    Source/ApcSurface.cpp
     Source/Controllers.cpp)
 
 target_compile_definitions(VegaDAW PRIVATE
@@ -135,7 +136,7 @@ endif()
 option(VEGA_TESTS "Build the headless test app" OFF)
 if (VEGA_TESTS)
     juce_add_console_app(VegaDAWTest PRODUCT_NAME "VegaDAWTest")
-    target_sources(VegaDAWTest PRIVATE tests/DawTest.cpp Source/DawSession.cpp Source/HuiSurface.cpp Source/StemSeparator.cpp)
+    target_sources(VegaDAWTest PRIVATE tests/DawTest.cpp Source/DawSession.cpp Source/HuiSurface.cpp Source/ApcSurface.cpp Source/StemSeparator.cpp)
     target_link_libraries(VegaDAWTest PRIVATE vega_demucs)
     target_compile_definitions(VegaDAWTest PRIVATE
         JUCE_PLUGINHOST_AU=1 JUCE_PLUGINHOST_VST3=1 JUCE_MODAL_LOOPS_PERMITTED=1 JUCE_STRICT_REFCOUNTEDPOINTER=1

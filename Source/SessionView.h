@@ -92,6 +92,13 @@ public:
             g.setColour (VegaColours::text); g.setFont (VegaFonts::ui (11.0f, true));
             g.drawText (name.isNotEmpty() ? name : "Scene " + juce::String (sIdx + 1), r.reduced (4, 0), juce::Justification::centredLeft, true);
         }
+        // the box an APC Key 25 (or other launcher controller) is showing
+        if (vs.controllerWindow)
+            if (auto box = vs.controllerWindow(); ! box.isEmpty())
+            {
+                auto a = cellBounds (box.getX(), box.getY()).getUnion (cellBounds (box.getRight() - 1, box.getBottom() - 1)).toFloat().expanded (1.5f);
+                g.setColour (juce::Colour (0xffe04848)); g.drawRoundedRectangle (a, 4.0f, 2.0f);
+            }
         g.restoreState();
         if (tracks.isEmpty())
         {

@@ -135,7 +135,7 @@ private:
 class MainComponent : public juce::Component, public juce::MenuBarModel, public juce::DragAndDropContainer, private juce::Timer
 {
 public:
-    MainComponent (te::Engine& e) : engine (e), session (e), vs (session), hub (e, session), transport (vs), arrange (vs), mixer (vs), launcher (vs), pianoRoll (vs), browser (vs)
+    MainComponent (te::Engine& e) : engine (e), session (e), vs (session), hub (e, session), apc (e, session), transport (vs), arrange (vs), mixer (vs), launcher (vs), pianoRoll (vs), browser (vs)
     {
         setLookAndFeel (&lnf);
         session.edit().getAutomationRecordManager().setWritingAutomation (false);
@@ -162,14 +162,22 @@ public:
             if (sp != nullptr) browser.startScan (engine.getPluginManager().knownPluginList.getNumTypes() > 0);
         });
         vs.onOpenPianoRoll = [this] { showPianoRoll (true); };
-        vs.onSelectionChanged = [this] { hub.surface.selectedID = vs.selectedTrack; routeMidiToSelectedTrack(); arrange.repaint(); };
+        vs.onSelectionChanged = [this] { hub.surface.selectedID = vs.selectedTrack; apc.surface.selectedID = vs.selectedTrack; routeMidiToSelectedTrack(); arrange.repaint(); };
+        apc.surface.onSelectTrack = [this] (te::AudioTrack* t) { vs.selectTrack (t); };
+        apc.surface.onSelectClip = [this] (te::Clip* c) { vs.selectClip (c); };
+        apc.surface.onOpenClip = [this] (te::Clip* c) { vs.selectClip (c); if (dynamic_cast<te::MidiClip*> (c) != nullptr || dynamic_cast<te::StepClip*> (c) != nullptr) showPianoRoll (true); };
+        vs.controllerWindow = [this]
+        {
+            return apc.isConnected() ? juce::Rectangle<int> (apc.surface.trackOffset, apc.surface.sceneOffset, ApcSurface::padCols, ApcSurface::padRows) : juce::Rectangle<int>();
+        };
+        apc.autoConnect();
         hub.onSelectTrack = [this] (te::AudioTrack* t) { vs.selectTrack (t); };
         hub.onSave = [this] { save (false); };
         hub.autoConnect();
         juce::Timer::callAfterDelay (1200, [sp = juce::Component::SafePointer<MainComponent> (this)] { if (sp != nullptr) sp->autoDetectMcu(); });
         pianoRoll.onClose = [this] { showPianoRoll (false); };
         session.onBeforeEditChange = [this] { engine.getExternalControllerManager().detachFromEdit (&session.edit()); arrange.clearAll(); mixer.clearAll(); };
-        session.onEditChanged = [this] { arrange.editChanged(); mixer.rebuild(); launcher.editChanged(); hub.editChanged(); transport.refreshFromEdit(); setupInputs(); showPianoRoll (false); updateTitle(); };
+        session.onEditChanged = [this] { arrange.editChanged(); mixer.rebuild(); launcher.editChanged(); hub.editChanged(); apc.editChanged(); transport.refreshFromEdit(); setupInputs(); showPianoRoll (false); updateTitle(); };
         divider.onDrag = [this] (int dy) { pianoH = juce::jlimit (160, getHeight() - 240, pianoH - dy); resized(); };
         setupInputs();
         transport.refreshFromEdit();
@@ -273,6 +281,7 @@ public:
             m.addItem (46, "MIDI learn mappings...");
             m.addItem (47, juce::String ("Mackie Control (MCU)...") + (mcuEnabled() ? "   - on" : ""));
             m.addItem (44, juce::String ("Controllers (FLkey 2 / HUI)...") + (hub.isConnected() ? "   - connected" : ""));
+            m.addItem (49, juce::String ("Akai APC Key 25 mk2...") + (apc.isConnected() ? "   - connected" : ""));
             m.addItem (42, "Metronome", true, session.edit().clickTrackEnabled.get());
             m.addItem (43, "Follow playhead", true, vs.followPlayhead);
         }
@@ -301,6 +310,7 @@ public:
             case 27: if (auto* t = vs.getSelectedTrack()) renderTrack (*t, true); break;
             case 19: if (auto* t = vs.getSelectedTrack()) renderTrack (*t, false); break;
             case 48: showSession (! launcher.isVisible()); break;
+            case 49: showApcSettings(); break;
             case 7: separateFile(); break;
             case 9: juce::JUCEApplication::getInstance()->systemRequestedQuit(); break;
             case 700: case 701: case 702: case 703: case 704: case 705: case 706: case 707: case 708: case 709:
@@ -649,6 +659,34 @@ private:
         }), false);
     }
 
+    void showApcSettings()
+    {
+        auto* w = new juce::AlertWindow ("Akai APC Key 25 mk2",
+            juce::String ("Status: ") + (apc.isConnected() ? "connected to " + apc.inputName : juce::String ("not connected")) + "\n\n"
+            "Pads launch the clip launcher's clips (the box in the SESSION view shows which 8 x 5). Scene buttons launch scenes; "
+            "Shift + scene button picks what the 8 track buttons do (Clip Stop / Solo / Mute / Rec Arm / Select). "
+            "Shift + arrows move the box, Shift + Volume / Pan / Send / Device pick what the knobs do. "
+            "Stop All Clips stops the launcher (Shift: back to arrangement). The keys play the selected instrument track.\n\n"
+            "Pick the APC's second (control) port - on Windows \"MIDIIN2 (APC Key 25 mk2)\" and \"MIDIOUT2 (APC Key 25 mk2)\".", juce::MessageBoxIconType::NoIcon);
+        juce::StringArray ins { "(off)" }, outs { "(none)" };
+        for (auto& d : juce::MidiInput::getAvailableDevices()) ins.add (d.name);
+        for (auto& d : juce::MidiOutput::getAvailableDevices()) outs.add (d.name);
+        w->addComboBox ("in", ins, "Control input");
+        w->addComboBox ("out", outs, "Lights output");
+        if (auto* cb = w->getComboBoxComponent ("in")) cb->setSelectedItemIndex (std::max (0, ins.indexOf (apc.inputName)));
+        if (auto* cb = w->getComboBoxComponent ("out")) cb->setSelectedItemIndex (std::max (0, outs.indexOf (apc.outputName)));
+        w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey)); w->addButton ("Auto-detect", 2); w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int r)
+        {
+            std::unique_ptr<juce::AlertWindow> owner (w);
+            if (r == 2) { apc.autoConnect (true); setupInputs(); if (! apc.isConnected()) juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "APC Key 25", "No APC Key 25 mk2 found - is it plugged in?"); return; }
+            if (r != 1) return;
+            auto* in = w->getComboBoxComponent ("in"); auto* out = w->getComboBoxComponent ("out");
+            apc.connect (in->getSelectedItemIndex() > 0 ? in->getText() : juce::String(), out->getSelectedItemIndex() > 0 ? out->getText() : juce::String(), true);
+            setupInputs();
+        }), false);
+    }
+
     void showMappings()
     {
         auto& pcm = session.edit().getParameterControlMappings();
@@ -713,7 +751,8 @@ private:
         for (auto& midiIn : dm.getMidiInDevices())
         {
             // controller "DAW" ports carry HUI control data, not notes - leave them to the controller script
-            if (ControllerHub::looksLikeDawPort (midiIn->getName()) || (hub.inputName.isNotEmpty() && midiIn->getName() == hub.inputName)) { midiIn->setEnabled (false); continue; }
+            if (ControllerHub::looksLikeDawPort (midiIn->getName()) || ApcHub::isApcControlPort (midiIn->getName())
+                 || (hub.inputName.isNotEmpty() && midiIn->getName() == hub.inputName)) { midiIn->setEnabled (false); continue; }
             if (isControllerPort (midiIn->getName())) continue;     // Mackie Control port: owned by the MCU driver, not a note input
             midiIn->setMonitorMode (te::InputDevice::MonitorMode::automatic); midiIn->setEnabled (true);
         }
@@ -808,7 +847,7 @@ private:
 
     te::Engine& engine;
     VegaLookAndFeel lnf;
-    DawSession session; te::SelectionManager selection { engine }; ViewState vs; ControllerHub hub;
+    DawSession session; te::SelectionManager selection { engine }; ViewState vs; ControllerHub hub; ApcHub apc;
     juce::MenuBarComponent menuBar;
     TransportBar transport; ArrangeView arrange; MixerView mixer; SessionView launcher; PianoRoll pianoRoll; PluginBrowser browser; Divider divider;
     int browserW = 250;
