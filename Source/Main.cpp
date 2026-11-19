@@ -772,7 +772,8 @@ private:
             if (ControllerHub::looksLikeDawPort (midiIn->getName()) || ApcHub::isApcControlPort (midiIn->getName())
                  || (hub.inputName.isNotEmpty() && midiIn->getName() == hub.inputName)) { midiIn->setEnabled (false); continue; }
             if (isControllerPort (midiIn->getName())) continue;     // Mackie Control port: owned by the MCU driver, not a note input
-            midiIn->setMonitorMode (te::InputDevice::MonitorMode::automatic); midiIn->setEnabled (true);
+            // always audible: the keys only ever feed the selected instrument track, armed or not
+            midiIn->setMonitorMode (te::InputDevice::MonitorMode::on); midiIn->setEnabled (true);
         }
         session.edit().getTransport().ensureContextAllocated();
         engine.getExternalControllerManager().setCurrentEdit (&session.edit(), &selection);
