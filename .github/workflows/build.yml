@@ -146,7 +146,11 @@ jobs:
           VERSION_NAME: 0.1.${{ github.run_number }}
         run: gradle assembleRelease --no-daemon --stacktrace
       - name: Collect
-        run: cp android/app/build/outputs/apk/release/app-release.apk VegaSketch-Android.apk && ls -la VegaSketch-Android.apk
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk VegaSketch-Android.apk && ls -la VegaSketch-Android.apk
+          unzip -l VegaSketch-Android.apk | grep -E "libvegasketch.so|liboboe.so|libc\+\+_shared.so|classes.dex"
+          unzip -l VegaSketch-Android.apk | grep -q "lib/arm64-v8a/libvegasketch.so"
+          "$ANDROID_HOME"/build-tools/$(ls "$ANDROID_HOME"/build-tools | sort -V | tail -1)/apksigner verify --print-certs VegaSketch-Android.apk | head -3
       - uses: actions/upload-artifact@v4
         with:
           name: VegaSketch-Android
