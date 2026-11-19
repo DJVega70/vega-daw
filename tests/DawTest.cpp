@@ -34,6 +34,17 @@ static float toneDb (const juce::File& f, te::Engine& e, double hz)
     return (float) juce::Decibels::gainToDecibels (std::sqrt (re * re + im * im) * 4.0 / n, -200.0);
 }
 
+static juce::File writeTone (const juce::String& name, double hz, double seconds, float amp = 0.5f)
+{
+    auto f = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile (name);
+    f.deleteFile(); juce::WavAudioFormat wav;
+    std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (f), 48000.0, 2, 24, {}, 0));
+    juce::AudioBuffer<float> b (2, (int) (48000 * seconds));
+    for (int i = 0; i < b.getNumSamples(); ++i) { const float v = amp * (float) std::sin (2 * juce::MathConstants<double>::pi * hz * i / 48000.0); b.setSample (0, i, v); b.setSample (1, i, v); }
+    w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+    return f;
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -492,6 +503,203 @@ int main()
         }
         check (wtm.getMarkers().size() == 3 && std::abs (peakAt - 1.5) < 0.12, "dragging a warp marker moves the hit from 1.0 s to " + juce::String (peakAt, 2) + " s");
         o.deleteFile(); f.deleteFile();
+    }
+    {   // ---- folders, duplicate, tempo / signature changes, markers
+        DawSession fs (engine);
+        auto* a = fs.getTracks()[0];
+        auto* f = fs.addFolder ("Drums");
+        fs.moveToFolder (*a, f);
+        check (DawSession::isFolder (*f) && fs.folderOf (*a) == f && fs.getOutputBus (*a) == f, "a track put in a folder is routed into it");
+        auto order = fs.getTracks();
+        check (order.indexOf (a) == order.indexOf (f) + 1, "folder members sit right under the folder");
+        DawSession::setCollapsed (*f, true);
+        check (fs.isHiddenByFolder (*a), "collapsing a folder hides its tracks");
+        fs.moveTrack (*f, 0);
+        order = fs.getTracks();
+        { juce::String o2; for (auto* t : order) o2 << t->getName() << ","; check (order[0] == f && order[1] == a, "moving a folder moves its tracks with it (" + o2 + ")"); }
+        fs.moveToFolder (*a, nullptr);
+        check (fs.folderOf (*a) == nullptr && fs.getOutputBus (*a) == nullptr, "taking a track out of a folder routes it back to the master");
+        te::AudioTrack* synthT = nullptr; for (auto* t : fs.getTracks()) if (DawSession::kindOf (*t) == DawSession::TrackKind::midi) synthT = t;
+        auto* d = fs.duplicateTrack (*synthT);
+        check (d != nullptr && d->getName().endsWith ("copy") && d->pluginList[0] != nullptr && d->pluginList[0]->isSynth(), "duplicate track copies the instrument ("
+               + (d ? d->getName() + " / " + (d->pluginList[0] ? d->pluginList[0]->getName() : juce::String ("no plugin")) : juce::String ("null")) + ")");
+        fs.setTempo (120.0);
+        const auto bar9 = fs.edit().tempoSequence.toTime (te::BeatPosition::fromBeats (32.0));
+        fs.addTempoChange (bar9, 140.0);
+        auto& ts = fs.edit().tempoSequence;
+        check (ts.getNumTempos() == 2 && std::abs (ts.getBpmAt (te::TimePosition::fromSeconds (4.0)) - 120.0) < 0.01
+               && std::abs (ts.getBpmAt (bar9 + 4s) - 140.0) < 0.01, "tempo change at bar 9 (120 -> 140 BPM)");
+        fs.addTimeSigChange (fs.edit().tempoSequence.toTime (te::BeatPosition::fromBeats (17.5)), 3, 4);
+        check (ts.getNumTimeSigs() == 2 && ts.getTimeSig (1)->numerator.get() == 3 && std::abs (ts.getTimeSig (1)->getStartBeat().inBeats() - 20.0) < 0.01,
+               "time signature change snaps to the next bar (beat " + juce::String (ts.getTimeSig (1)->getStartBeat().inBeats()) + ")");
+        auto* mk = fs.addMarker (te::TimePosition::fromSeconds (8.0), "Chorus");
+        check (mk != nullptr && mk->getName() == "Chorus" && fs.edit().getMarkerManager().getMarkers().size() == 1, "named marker added");
+        auto pf = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_folder_test.vegaproj");
+        fs.saveProjectAs (pf);
+        DawSession fs2 (engine);
+        fs2.openProject (pf);
+        int folders = 0; for (auto* t : fs2.getTracks()) if (DawSession::isFolder (*t)) ++folders;
+        check (folders == 1 && fs2.edit().tempoSequence.getNumTempos() == 2 && fs2.edit().getMarkerManager().getMarkers().size() == 1, "folders, tempo changes and markers are saved");
+        pf.deleteFile();
+    }
+    {   // ---- export formats, normalising, stems, bounce, consolidate
+        DawSession ex (engine);
+        ex.setTempo (120.0);
+        auto tone = writeTone ("vega_tone.wav", 440.0, 4.0, 0.25f);
+        auto* at = ex.getTracks()[0];
+        ex.insertAudioFile (*at, tone, te::TimePosition());
+        auto* bus = ex.addTrack (DawSession::TrackKind::bus, "Bus");
+        auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory);
+        DawSession::ExportOptions o; o.tailSeconds = 0.2;
+        o.format = DawSession::ExportOptions::Format::flac;
+        check (ex.exportMix (tmp.getChildFile ("vega_x.flac"), o) && peakOf (tmp.getChildFile ("vega_x.flac"), engine) > 0.1f, "export FLAC");
+        o.format = DawSession::ExportOptions::Format::ogg;
+        check (ex.exportMix (tmp.getChildFile ("vega_x.ogg"), o) && peakOf (tmp.getChildFile ("vega_x.ogg"), engine) > 0.1f, "export OGG Vorbis");
+        o.format = DawSession::ExportOptions::Format::aiff;
+        check (ex.exportMix (tmp.getChildFile ("vega_x.aif"), o) && peakOf (tmp.getChildFile ("vega_x.aif"), engine) > 0.1f, "export AIFF");
+        o.format = DawSession::ExportOptions::Format::wav; o.normalise = DawSession::ExportOptions::Normalise::peak; o.peakDb = -0.3f;
+        ex.exportMix (tmp.getChildFile ("vega_norm.wav"), o);
+        const float pk = peakOf (tmp.getChildFile ("vega_norm.wav"), engine);
+        check (std::abs (juce::Decibels::gainToDecibels (pk) + 0.3f) < 0.3f, "peak normalise to -0.3 dBFS (" + juce::String (juce::Decibels::gainToDecibels (pk), 2) + " dB)");
+        o.normalise = DawSession::ExportOptions::Normalise::lufs; o.lufs = -14.0f;
+        ex.exportMix (tmp.getChildFile ("vega_lufs.wav"), o);
+        const float pl = peakOf (tmp.getChildFile ("vega_lufs.wav"), engine);
+        check (pl > pk * 0.2f && juce::Decibels::gainToDecibels (pl) <= -0.9f, "loudness normalise (-14 LUFS, true peak under -1 dB: peak " + juce::String (juce::Decibels::gainToDecibels (pl), 2) + " dB)");
+        if (DawSession::findLame().existsAsFile())
+        {
+            o.format = DawSession::ExportOptions::Format::mp3; o.normalise = DawSession::ExportOptions::Normalise::none;
+            check (ex.exportMix (tmp.getChildFile ("vega_x.mp3"), o) && tmp.getChildFile ("vega_x.mp3").getSize() > 1000, "export MP3 through lame");
+        }
+        // stems: the audio track goes through the bus; the bus stem is just the bus
+        ex.routeToBus (*at, bus);
+        o = {}; o.tailSeconds = 0.2;
+        auto stemDir = tmp.getChildFile ("vega_stems"); stemDir.deleteRecursively();
+        auto stems = ex.exportStems (stemDir, o);
+        check (stems.size() == 3, "one stem per track (" + juce::String (stems.size()) + " files)");
+        if (stems.size() == 3)
+        {
+            const float sa = peakOf (stems[0], engine), ss = peakOf (stems[1], engine), sb = peakOf (stems[2], engine);
+            check (sa > 0.1f && sb > 0.1f && ss < 0.001f, "stems: audio " + juce::String (sa, 3) + " (through its bus), empty synth " + juce::String (ss, 4) + ", bus " + juce::String (sb, 3));
+        }
+        stemDir.deleteRecursively();
+        ex.routeToBus (*at, nullptr);
+        // bounce in place
+        const int before = ex.getTracks().size();
+        auto* b = ex.bounceToNewTrack (*at, { te::TimePosition(), te::TimePosition::fromSeconds (2.0) });
+        check (b != nullptr && ex.getTracks().size() == before + 1 && at->isMuted (false) && b->getClips().size() == 1
+               && ex.getTracks().indexOf (b) == ex.getTracks().indexOf (at) + 1, "bounce in place: new track under the original, original muted");
+        if (b != nullptr) if (auto* bc = dynamic_cast<te::WaveAudioClip*> (b->getClips()[0])) check (peakOf (bc->getOriginalFile(), engine) > 0.1f, "bounced audio isn't silent");
+        // consolidate: split the audio into 3 clips, then join them again
+        at->setMute (false);
+        auto* c0 = at->getClips()[0];
+        ex.splitClip (*c0, te::TimePosition::fromSeconds (1.0));
+        ex.splitClip (*at->getClips()[1], te::TimePosition::fromSeconds (2.5));
+        const int pieces = at->getClips().size();
+        auto* joined = ex.consolidate (*at, { te::TimePosition::fromSeconds (0.5), te::TimePosition::fromSeconds (3.0) });
+        check (pieces == 3 && joined != nullptr && at->getClips().size() == 1 && std::abs (joined->getPosition().getLength().inSeconds() - 4.0) < 0.01,
+               "consolidate joins 3 audio clips into one (" + juce::String (at->getClips().size()) + " left)");
+        te::AudioTrack* syn = nullptr; for (auto* t : ex.getTracks()) if (DawSession::kindOf (*t) == DawSession::TrackKind::midi) syn = t;
+        auto m1 = ex.insertMidiClip (*syn, te::TimePosition(), te::TimeDuration::fromSeconds (2.0));
+        auto m2 = ex.insertMidiClip (*syn, te::TimePosition::fromSeconds (2.0), te::TimeDuration::fromSeconds (2.0));
+        m1->getSequence().addNote (60, te::BeatPosition(), te::BeatDuration::fromBeats (1), 100, 0, nullptr);
+        m2->getSequence().addNote (64, te::BeatPosition(), te::BeatDuration::fromBeats (1), 100, 0, nullptr);
+        auto* mj = dynamic_cast<te::MidiClip*> (ex.consolidate (*syn, { te::TimePosition(), te::TimePosition::fromSeconds (4.0) }));
+        check (mj != nullptr && syn->getClips().size() == 1 && mj->getSequence().getNumNotes() == 2
+               && std::abs (mj->getSequence().getNotes()[1]->getStartBeat().inBeats() - 4.0) < 0.01, "consolidate merges MIDI clips, notes keep their place ("
+               + juce::String (syn->getClips().size()) + " clips, " + (mj ? juce::String (mj->getSequence().getNumNotes()) + " notes, 2nd at " + juce::String (mj->getSequence().getNumNotes() > 1 ? mj->getSequence().getNotes()[1]->getStartBeat().inBeats() : -1.0) : juce::String ("null")) + ")");
+        // controller lane data survives
+        if (mj != nullptr)
+        {
+            mj->getSequence().addControllerEvent (te::BeatPosition::fromBeats (1.0), 1, 100 << 7, nullptr);
+            mj->getSequence().addControllerEvent (te::BeatPosition::fromBeats (2.0), te::MidiControllerEvent::pitchWheelType, 12000, nullptr);
+            check (mj->getSequence().getNumControllerEvents() == 2, "mod wheel + pitch bend events in a MIDI clip");
+        }
+        for (auto n : { "vega_x.flac", "vega_x.ogg", "vega_x.aif", "vega_norm.wav", "vega_lufs.wav", "vega_x.mp3" }) tmp.getChildFile (n).deleteFile();
+        tone.deleteFile();
+    }
+    {   // ---- takes and comping
+        DawSession cs (engine);
+        auto t1 = writeTone ("vega_take1.wav", 300.0, 4.0, 0.3f), t2 = writeTone ("vega_take2.wav", 1200.0, 4.0, 0.3f);
+        auto* at = cs.getTracks()[0];
+        auto clip = cs.insertAudioFile (*at, t1, te::TimePosition());
+        DawSession::addTakes (*clip, { t1, t2 });
+        check (DawSession::takeFiles (*clip).size() == 2 && DawSession::currentTake (*clip) == 0, "clip has 2 takes, take 1 playing");
+        DawSession::setTake (*clip, 1);
+        check (DawSession::currentTake (*clip) == 1 && clip->getOriginalFile() == t2 && DawSession::takeFiles (*clip).size() == 2, "switch to take 2 (takes are kept)");
+        DawSession::setTake (*clip, 0);
+        auto* piece = cs.compTake (*clip, 1, { te::TimePosition::fromSeconds (1.0), te::TimePosition::fromSeconds (2.0) });
+        check (piece != nullptr && at->getClips().size() == 3 && DawSession::currentTake (*piece) == 1, "comp take 2 into 1 s - 2 s (clip split into 3)");
+        auto o = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_comp.wav");
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (500);
+        cs.exportWav (o, te::TimeRange (te::TimePosition(), te::TimePosition::fromSeconds (3.0)));
+        {
+            std::unique_ptr<juce::AudioFormatReader> r (engine.getAudioFileFormatManager().readFormatManager.createReaderFor (o));
+            auto bandDb = [&r] (double startSec, double hz)
+            {
+                const int n = 24000; juce::AudioBuffer<float> b (1, n); r->read (&b, 0, n, (juce::int64) (startSec * r->sampleRate), true, false);
+                double re = 0, im = 0;
+                for (int i = 0; i < n; ++i) { const double ph = 2 * juce::MathConstants<double>::pi * hz * i / r->sampleRate; re += b.getSample (0, i) * std::cos (ph); im += b.getSample (0, i) * std::sin (ph); }
+                return juce::Decibels::gainToDecibels (std::sqrt (re * re + im * im) * 2.0 / n, -200.0);
+            };
+            if (r != nullptr)
+                check (bandDb (0.25, 300) > bandDb (0.25, 1200) + 20 && bandDb (1.25, 1200) > bandDb (1.25, 300) + 20 && bandDb (2.25, 300) > bandDb (2.25, 1200) + 20,
+                       "the comp plays take 1, then take 2 from 1-2 s, then take 1 again");
+        }
+        auto made = cs.unpackTakes (*piece);
+        check (made.size() == 2, "takes to new tracks");
+        DawSession::keepCurrentTakeOnly (*piece);
+        check (DawSession::takeFiles (*piece).isEmpty() && piece->getOriginalFile() == t2, "keep the current take only");
+        o.deleteFile(); t1.deleteFile(); t2.deleteFile();
+    }
+    {   // ---- clip launcher
+        DawSession ls (engine);
+        ls.ensureScenes (8);
+        auto* syn = ls.getTracks (false)[1];
+        check (ls.numScenes() == 8 && syn->getClipSlotList().getClipSlots().size() == 8, "8 scenes, every track has 8 slots");
+        auto* sc = ls.createSlotMidiClip (*syn, 2, 2);
+        check (sc != nullptr && DawSession::slotClip (*syn, 2) == sc && sc->isLooping(), "new looping MIDI clip in slot 3");
+        sc->getSequence().addNote (60, te::BeatPosition(), te::BeatDuration::fromBeats (1), 100, 0, nullptr);
+        auto arr = ls.insertMidiClip (*syn, te::TimePosition(), te::TimeDuration::fromSeconds (2.0));
+        auto* copied = ls.copyToSlot (*arr, *syn, 0);
+        check (copied != nullptr && DawSession::slotClip (*syn, 0) != nullptr && syn->getClips().size() == 1, "arrangement clip copied into a slot (the original stays)");
+        auto* back = ls.copyToArrangement (*sc, te::TimePosition::fromSeconds (8.0));
+        check (back != nullptr && syn->getClips().size() == 2 && std::abs (back->getPosition().getStart().inSeconds() - 8.0) < 1e-6, "slot clip copied to the arrangement at 8 s");
+        auto tone = writeTone ("vega_slot.wav", 220.0, 2.0);
+        check (ls.insertSlotFile (*ls.getTracks()[0], 1, tone) != nullptr, "audio file into an audio track's slot");
+        ls.insertScene (0);
+        check (ls.numScenes() == 9 && DawSession::slotClip (*syn, 3) == sc, "inserting a scene shifts the clips down");
+        ls.deleteScene (0);
+        check (ls.numScenes() == 8 && DawSession::slotClip (*syn, 2) == sc, "deleting a scene");
+        if (auto* fa = sc->getFollowActions()) { auto& a = fa->addAction(); a.action = te::FollowAction::trackNext; a.weight = 1.0; }
+        auto stepC = te::insertNewClip (*DawSession::slot (*syn, 4), te::TrackItem::Type::step, "Steps", te::TimeRange (te::TimePosition(), te::TimePosition::fromSeconds (2.0)));
+        check (dynamic_cast<te::StepClip*> (stepC) != nullptr, "step-sequencer clip in a slot");
+        auto pf = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_launcher.vegaproj");
+        ls.saveProjectAs (pf);
+        DawSession ls2 (engine);
+        ls2.openProject (pf);
+        auto* syn2 = ls2.getTracks (false)[1];
+        auto* sc2 = syn2 != nullptr ? dynamic_cast<te::MidiClip*> (DawSession::slotClip (*syn2, 2)) : nullptr;
+        check (ls2.numScenes() == 8 && sc2 != nullptr && sc2->getSequence().getNumNotes() == 1 && sc2->getFollowActions() != nullptr && sc2->getFollowActions()->getActions().size() == 1,
+               "launcher clips, notes and follow actions are saved with the project");
+        ls.launchClip (*sc);       // no audio device here: just mustn't crash
+        ls.backToArrangement();
+        check (! syn->playSlotClips.get(), "back to arrangement");
+        pf.deleteFile(); tone.deleteFile();
+    }
+    {   // ---- step sequencer clip in the arrangement renders the drum pattern
+        DawSession st (engine);
+        auto* syn = st.getTracks (false)[1];
+        auto* clip = dynamic_cast<te::StepClip*> (syn->insertNewClip (te::TrackItem::Type::step, "Steps", { te::TimePosition(), te::TimePosition::fromSeconds (2.0) }, nullptr));
+        check (clip != nullptr && clip->getChannels().size() == 8 && clip->getChannels()[0]->noteNumber.get() == 36, "step clip: 8 GM drum rows, kick first");
+        if (clip != nullptr)
+        {
+            auto pat = clip->getPattern (0);
+            for (int i = 0; i < 16; i += 4) pat.setNote (0, i, true);
+            auto o = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_steps.wav");
+            st.exportWav (o, te::TimeRange (te::TimePosition(), te::TimePosition::fromSeconds (2.0)));
+            check (peakOf (o, engine) > 0.01f, "step clip plays the instrument (peak " + juce::String (peakOf (o, engine), 3) + ")");
+            o.deleteFile();
+        }
     }
     out.deleteFile(); proj.deleteFile();
     std::cout << (fails == 0 ? "ALL PASSED" : "FAILURES: " + std::to_string (fails)) << "\n";

@@ -54,6 +54,16 @@ public:
             owner.repaint();
         };
         addChildComponent (laneParamBox);
+        // folders: collapse / expand
+        setup (foldBtn, "", VegaColours::accentDim);
+        foldBtn.setVisible (DawSession::isFolder (t));
+        foldBtn.setTooltip ("Collapse / expand this folder");
+        foldBtn.onClick = [this] { DawSession::setCollapsed (*track, ! DawSession::isCollapsed (*track)); owner.rebuildHeaders(); };
+        // comping: show the take lanes
+        setup (takesBtn, "TK", juce::Colour (0xffe8a23a));
+        takesBtn.setTooltip ("Show / hide the take lanes (loop-record to get takes, then drag across a take to comp)");
+        takesBtn.setVisible (false);
+        takesBtn.onClick = [this] { track->state.setProperty ("vegaTakesShown", ! (bool) track->state.getProperty ("vegaTakesShown", false), nullptr); owner.resized(); owner.repaint(); };
         vol.setSliderStyle (juce::Slider::LinearBar); vol.setRange (-60.0, 6.0, 0.1); vol.setSkewFactorFromMidPoint (-12.0);
         vol.setTextValueSuffix (" dB"); vol.setColour (juce::Slider::trackColourId, DawSession::trackColour (t).withAlpha (0.45f));
         vol.onValueChange = [this] { if (auto vp = track->getVolumePlugin()) vp->setVolumeDb ((float) vol.getValue()); };
@@ -74,20 +84,37 @@ public:
         }
         if (auto vp = track->getVolumePlugin()) if (! vol.isMouseButtonDown()) vol.setValue (vp->getVolumeDb(), juce::dontSendNotification);
         if (name.getText() != track->getName() && ! name.isBeingEdited()) name.setText (track->getName(), juce::dontSendNotification);
+        const bool hasTakes = ArrangeView::maxTakes (*track) > 1;
+        if (takesBtn.isVisible() != hasTakes) { takesBtn.setVisible (hasTakes); resized(); }
+        takesBtn.setToggleState (owner.takesHeight (*track) > 0, juce::dontSendNotification);
+        foldBtn.setButtonText (DawSession::isCollapsed (*track) ? juce::String::fromUTF8 ("\xe2\x96\xb8") : juce::String::fromUTF8 ("\xe2\x96\xbe"));
         repaint();
     }
     void paint (juce::Graphics& g) override
     {
         const bool sel = owner.vs.selectedTrack == track->itemID;
         g.setColour (juce::Colour (sel ? 0xff2a2f2f : 0xff222222)); g.fillRect (getLocalBounds().reduced (0, 1));
-        g.setColour (DawSession::trackColour (*track)); g.fillRect (0, 1, 5, getHeight() - 2);
+        auto& sess = owner.vs.session;
+        const bool folder = DawSession::isFolder (*track);
+        auto* parent = sess.folderOf (*track);
+        if (parent != nullptr)
+        {   // inside a folder: the folder's colour runs down the left, the track's own colour next to it
+            g.setColour (DawSession::trackColour (*parent).withAlpha (0.55f)); g.fillRect (0, 0, 4, getHeight());
+            g.setColour (DawSession::trackColour (*track)); g.fillRect (6, 1, 4, getHeight() - 2);
+        }
+        else
+        {
+            g.setColour (DawSession::trackColour (*track)); g.fillRect (0, 1, folder ? 8 : 5, getHeight() - 2);
+            if (folder) { g.setColour (DawSession::trackColour (*track).withAlpha (0.10f)); g.fillRect (8, 1, getWidth() - 8, getHeight() - 2); }
+        }
         g.setColour (VegaColours::line); g.drawHorizontalLine (getHeight() - 1, 0, (float) getWidth());
         const auto kind = DawSession::kindOf (*track);
         g.setFont (VegaFonts::ui (9.5f, true)); g.setColour (VegaColours::textDim);
-        juce::String sub = kind == DawSession::TrackKind::bus ? "BUS" : kind == DawSession::TrackKind::midi ? "INSTRUMENT" : "AUDIO";
+        juce::String sub = folder ? "FOLDER  -  " + juce::String (sess.folderMembers (*track).size()) + " TRACKS"
+                         : kind == DawSession::TrackKind::bus ? "BUS" : kind == DawSession::TrackKind::midi ? "INSTRUMENT" : "AUDIO";
         if (kind == DawSession::TrackKind::midi)
             if (auto* p = track->pluginList[0]; p != nullptr && p->isSynth()) sub = p->getName().toUpperCase();
-        if (auto* out = owner.vs.session.getOutputBus (*track)) sub << "  >  " << out->getName().toUpperCase();
+        if (auto* out = owner.vs.session.getOutputBus (*track); out != nullptr && out != parent) sub << "  >  " << out->getName().toUpperCase();
         if (track->isFrozen (te::Track::individualFreeze))
         {
             g.setColour (juce::Colour (0xff7fd8ff)); g.setFont (VegaFonts::ui (9.0f, true));
@@ -95,9 +122,20 @@ public:
             g.setColour (VegaColours::textDim); g.setFont (VegaFonts::ui (9.5f, true));
         }
         g.drawText (sub, 12, 26, getWidth() - 20, 12, juce::Justification::left);
-        if (const int lh = owner.laneHeight (*track); lh > 0)
+        if (const int tk = owner.takesHeight (*track); tk > 0)
         {
             const int ch = owner.clipHeight (*track);
+            for (int i = 0; i * ArrangeView::takeLaneH < tk; ++i)
+            {
+                const int y = ch + i * ArrangeView::takeLaneH;
+                g.setColour (juce::Colour (i % 2 ? 0xff1c1c1c : 0xff1f1f1f)); g.fillRect (10, y, getWidth() - 10, ArrangeView::takeLaneH - 1);
+                g.setColour (juce::Colour (0xffe8a23a)); g.setFont (VegaFonts::ui (10.0f, true));
+                g.drawText ("TAKE " + juce::String (i + 1), 16, y, getWidth() - 24, ArrangeView::takeLaneH, juce::Justification::centredLeft);
+            }
+        }
+        if (const int lh = owner.laneHeight (*track); lh > 0)
+        {
+            const int ch = owner.clipHeight (*track) + owner.takesHeight (*track);
             g.setColour (juce::Colour (0xff1a1d1d)); g.fillRect (5, ch, getWidth() - 5, lh - 1);
             g.setColour (VegaColours::textDim); g.setFont (VegaFonts::ui (9.0f, true));
             g.drawText ("AUTOMATION", 12, ch + 34, getWidth() - 20, 12, juce::Justification::left);
@@ -109,6 +147,9 @@ public:
         fxBtn.setBounds (top.removeFromRight (38).reduced (0, 1)); top.removeFromRight (3);
         autoBtn.setBounds (top.removeFromRight (24).reduced (0, 1)); top.removeFromRight (3);
         if (instBtn.isVisible()) { instBtn.setBounds (top.removeFromRight (40).reduced (0, 1)); top.removeFromRight (3); }
+        if (takesBtn.isVisible()) { takesBtn.setBounds (top.removeFromRight (28).reduced (0, 1)); top.removeFromRight (3); }
+        if (foldBtn.isVisible()) { foldBtn.setBounds (top.removeFromLeft (20).reduced (0, 2)); top.removeFromLeft (2); }
+        if (owner.vs.session.folderOf (*track) != nullptr) top.removeFromLeft (6);
         name.setBounds (top);
         auto row = juce::Rectangle<int> (10, 42, getWidth() - 20, 22);
         for (auto* b : { &mute, &solo, &arm, &input }) { if (! b->isVisible()) continue; b->setBounds (row.removeFromLeft (b == &input ? 34 : 26)); row.removeFromLeft (4); }
@@ -118,7 +159,7 @@ public:
         const bool lane = owner.laneHeight (*track) > 0;
         autoBtn.setToggleState (lane, juce::dontSendNotification);
         laneParamBox.setVisible (lane);
-        if (lane) { refreshLaneParams(); laneParamBox.setBounds (10, ch + 8, getWidth() - 20, 22); }
+        if (lane) { refreshLaneParams(); laneParamBox.setBounds (10, ch + owner.takesHeight (*track) + 8, getWidth() - 20, 22); }
     }
     void mouseDown (const juce::MouseEvent& e) override
     {
@@ -134,7 +175,7 @@ public:
         if (dragStartY - getScreenY() > getHeight() - 10 || resizing)
         {
             resizing = true;
-            track->state.setProperty ("vegaHeight", juce::jlimit (44, 260, e.getScreenY() - getScreenY() - owner.laneHeight (*track)), nullptr);
+            track->state.setProperty ("vegaHeight", juce::jlimit (44, 260, e.getScreenY() - getScreenY() - owner.laneHeight (*track) - owner.takesHeight (*track)), nullptr);
             owner.resized(); return;
         }
         auto p = owner.getLocalPoint (nullptr, e.getScreenPosition());
@@ -228,21 +269,75 @@ private:
         auto buses = s.getBuses();
         for (int i = 0; i < buses.size(); ++i) if (buses[i] != track.get()) route.addItem (201 + i, buses[i]->getName(), true, s.getOutputBus (*track) == buses[i]);
         m.addSubMenu ("Output", route);
+        const bool isFolderTrack = DawSession::isFolder (*track);
+        juce::PopupMenu fold;
+        juce::Array<te::AudioTrack*> folders;
+        for (auto* t : s.getTracks()) if (DawSession::isFolder (*t)) folders.add (t);
+        if (! isFolderTrack)
+        {
+            fold.addItem (300, "New folder with this track");
+            for (int i = 0; i < folders.size(); ++i) fold.addItem (301 + i, folders[i]->getName(), true, s.folderOf (*track) == folders[i]);
+            if (s.folderOf (*track) != nullptr) { fold.addSeparator(); fold.addItem (299, "Take out of folder"); }
+            m.addSubMenu ("Folder", fold);
+        }
+        else
+        {
+            m.addItem (8, DawSession::isCollapsed (*track) ? "Expand folder" : "Collapse folder");
+            m.addItem (9, "Ungroup folder (keep the tracks)");
+        }
+        if (! isFolderTrack) m.addItem (7, "Duplicate track");
+        m.addSeparator();
+        if (DawSession::kindOf (*track) != DawSession::TrackKind::bus)
+        {
+            m.addItem (10, "Bounce in place (loop range, or the whole track)");
+            m.addItem (11, "Consolidate clips (loop range, or the whole track)");
+        }
+        if (ArrangeView::maxTakes (*track) > 1) m.addItem (12, owner.takesHeight (*track) > 0 ? "Hide take lanes" : "Show take lanes");
         m.addSeparator();
         const bool frozen = track->isFrozen (te::Track::individualFreeze);
         if (DawSession::kindOf (*track) != DawSession::TrackKind::bus)
             m.addItem (4, frozen ? "Unfreeze track" : "Freeze track (render plug-ins to save CPU)");
         m.addItem (5, (bool) track->state.getProperty ("vegaAutoShown", false) ? "Hide automation lane" : "Show automation lane");
         m.addSeparator();
-        m.addItem (3, "Delete track");
-        m.showMenuAsync ({}, [this, buses] (int r)
+        m.addItem (3, DawSession::isFolder (*track) ? "Delete folder and its tracks" : "Delete track");
+        m.showMenuAsync ({}, [this, buses, folders] (int r)
         {
             if (track == nullptr) return;
+            auto& ss = owner.vs.session;
+            if (r == 300)
+            {
+                ss.edit().getUndoManager().beginNewTransaction ("New folder");
+                auto* f = ss.addFolder();
+                if (f != nullptr)
+                {
+                    ss.moveTrack (*f, ss.getTracks().indexOf (track.get()));
+                    ss.moveToFolder (*track, f);
+                }
+                owner.rebuildHeaders(); return;
+            }
+            if (r > 300 && r <= 300 + folders.size()) { ss.moveToFolder (*track, folders[r - 301]); owner.rebuildHeaders(); return; }
+            if (r == 299) { ss.moveToFolder (*track, nullptr); owner.rebuildHeaders(); return; }
+            if (r == 7) { if (auto* d = ss.duplicateTrack (*track)) owner.vs.selectTrack (d); owner.rebuildHeaders(); return; }
+            if (r == 8) { DawSession::setCollapsed (*track, ! DawSession::isCollapsed (*track)); owner.rebuildHeaders(); return; }
+            if (r == 9)
+            {
+                auto t = track;
+                for (auto* m2 : ss.folderMembers (*t)) ss.moveToFolder (*m2, nullptr);
+                ss.deleteTrack (*t); return;
+            }
+            if ((r == 10 || r == 11) && owner.onRenderTrack) { owner.onRenderTrack (*track, r == 10); return; }
+            if (r == 12) { track->state.setProperty ("vegaTakesShown", owner.takesHeight (*track) == 0, nullptr); owner.resized(); owner.repaint(); return; }
             if (r == 1) name.showEditor();
             else if (r >= 100 && r < 109) { static const juce::uint32 pal[] { 0xff48e1e8, 0xffe8b448, 0xff7ee87a, 0xffe8708a, 0xffa58bff, 0xff6fb7ff, 0xffffa25e, 0xff5ee8b6, 0xffcccccc }; track->state.setProperty ("vegaColour", juce::Colour (pal[r - 100]).toString(), nullptr); }
             else if (r == 200) owner.vs.session.routeToBus (*track, nullptr);
             else if (r > 200) owner.vs.session.routeToBus (*track, buses[r - 201]);
-            else if (r == 3) { auto t = track; owner.vs.session.deleteTrack (*t); }
+            else if (r == 3)
+            {
+                auto t = track;
+                if (DawSession::isFolder (*t))
+                    for (auto* m2 : owner.vs.session.folderMembers (*t)) owner.vs.session.deleteTrack (*m2);   // the folder and everything in it
+                owner.vs.session.deleteTrack (*t);
+            }
             else if (r == 4)
             {
                 const bool now = ! track->isFrozen (te::Track::individualFreeze);
@@ -255,7 +350,7 @@ private:
         });
     }
     ArrangeView& owner;
-    juce::Label name; juce::TextButton mute, solo, arm, input, instBtn, fxBtn, autoBtn; juce::Slider vol;
+    juce::Label name; juce::TextButton mute, solo, arm, input, instBtn, fxBtn, autoBtn, foldBtn, takesBtn; juce::Slider vol;
     juce::ComboBox laneParamBox; juce::Array<te::AutomatableParameter*> laneParams;
     void refreshLaneParams()
     {
@@ -279,10 +374,9 @@ public:
     {
         g.fillAll (juce::Colour (0xff181818));
         auto& ed = vs.edit();
-        const int num = ed.tempoSequence.getTimeSig (0)->numerator;
         // rows
         int y = -vs.scrollY;
-        for (auto* t : vs.session.getTracks())
+        for (auto* t : owner.visibleTracks())
         {
             const int h = owner.trackHeight (*t);
             if (y + h >= 0 && y < getHeight())
@@ -296,7 +390,7 @@ public:
         const double first = std::floor (vs.scrollBeats), last = vs.xToBeat ((float) getWidth(), 0);
         for (double b = first; b <= last; b += 1.0)
         {
-            const bool bar = ((int) b % num) == 0;
+            const bool bar = vs.isBarStart (b);
             if (! bar && vs.pixelsPerBeat < 12) continue;
             g.setColour (juce::Colours::white.withAlpha (bar ? 0.09f : 0.035f));
             g.drawVerticalLine ((int) vs.beatToX (b, 0), 0, (float) std::min (getHeight(), y));
@@ -311,13 +405,15 @@ public:
         }
         // clips
         y = -vs.scrollY;
-        for (auto* t : vs.session.getTracks())
+        for (auto* t : owner.visibleTracks())
         {
-            const int h = owner.trackHeight (*t), ch = owner.clipHeight (*t);
+            const int h = owner.trackHeight (*t), ch = owner.clipHeight (*t), tk = owner.takesHeight (*t), lh = owner.laneHeight (*t);
             if (y + h >= 0 && y < getHeight())
             {
+                if (DawSession::isFolder (*t)) drawFolderOverview (g, *t, y, ch);
                 for (auto* c : t->getClips()) drawClip (g, *c, y, ch);
-                if (h > ch) drawLane (g, *t, y + ch, h - ch);
+                if (tk > 0) drawTakes (g, *t, y + ch, tk);
+                if (lh > 0) drawLane (g, *t, y + ch + tk, lh);
             }
             y += h;
         }
@@ -326,7 +422,7 @@ public:
         {
             const float x0 = vs.beatToX (vs.timeToBeats (tr.getTimeWhenStarted()), 0), x1 = vs.beatToX (vs.timeToBeats (tr.getPosition()), 0);
             int yy = -vs.scrollY;
-            for (auto* t : vs.session.getTracks())
+            for (auto* t : owner.visibleTracks())
             {
                 const int h = owner.trackHeight (*t);
                 bool armed = false;
@@ -424,6 +520,11 @@ public:
             g.setColour (juce::Colours::white.withAlpha (0.8f));
             if (fi > 1) g.drawLine (r.getX(), r.getBottom(), r.getX() + fi, r.getY(), 1.2f);
             if (fo > 1) g.drawLine (r.getRight() - fo, r.getY(), r.getRight(), r.getBottom(), 1.2f);
+            if (const int nt = DawSession::takeFiles (*ac).size(); nt > 1)
+            {
+                g.setFont (VegaFonts::ui (9.5f, true)); g.setColour (juce::Colour (0xffe8a23a));
+                g.drawText ("TAKE " + juce::String (DawSession::currentTake (*ac) + 1) + "/" + juce::String (nt), r.reduced (4, 2).toNearestInt(), juce::Justification::bottomRight);
+            }
             if (ac->getAutoTempo() || ac->getWarpTime() || std::abs (ac->getPitchChange()) > 0.01f)
             {
                 g.setFont (VegaFonts::ui (9.5f, true)); g.setColour (VegaColours::gold);
@@ -450,6 +551,25 @@ public:
                 }
             }
         }
+        else if (auto* sc = dynamic_cast<te::StepClip*> (&c))
+        {   // step clip: the pattern, repeated across the clip
+            auto pattern = sc->getPattern (0);
+            const int rows = sc->getChannels().size(), steps = pattern.getNumNotes();
+            const double stepBeats = pattern.getNoteLength().inBeats();
+            if (rows > 0 && steps > 0 && stepBeats > 0)
+            {
+                const float rh = r.getHeight() / (float) rows;
+                const double startBeat = vs.timeToBeats (pos.getStart()) - sc->getOffsetInBeats().inBeats(), endBeat = vs.timeToBeats (pos.getEnd());
+                g.setColour (col);
+                for (int i = 0; startBeat + i * stepBeats < endBeat && i < 4096; ++i)
+                    for (int ch = 0; ch < rows; ++ch)
+                        if (pattern.getNote (ch, i % steps))
+                        {
+                            const float x = vs.beatToX (startBeat + i * stepBeats, 0);
+                            g.fillRect (x, r.getY() + ch * rh, std::max (1.5f, (float) (stepBeats * vs.pixelsPerBeat) - 1.0f), std::max (1.0f, rh - 1.0f));
+                        }
+            }
+        }
         g.restoreState();
         g.setColour (sel ? juce::Colours::white : col.withAlpha (0.8f));
         g.drawRoundedRectangle (juce::Rectangle<float> (x0, (float) rowY + 3, std::max (2.0f, x1 - x0), (float) rowH - 6), 4.0f, sel ? 2.0f : 1.0f);
@@ -463,6 +583,130 @@ public:
             it = thumbs.emplace (key, std::make_unique<te::SmartThumbnail> (vs.edit().engine, te::AudioFile (vs.edit().engine, c.getOriginalFile()), *this, &vs.edit())).first;
         return *it->second;
     }
+
+    // ---------------------------------------------------------------- folders: a summary of what's inside
+    void drawFolderOverview (juce::Graphics& g, te::AudioTrack& folder, int rowY, int rowH)
+    {
+        auto members = vs.session.folderMembers (folder);
+        const auto col = DawSession::trackColour (folder);
+        g.setColour (col.withAlpha (0.05f)); g.fillRect (0, rowY + 1, getWidth(), rowH - 2);
+        if (members.isEmpty())
+        {
+            g.setColour (VegaColours::textDim); g.setFont (VegaFonts::ui (10.0f));
+            g.drawText ("Empty folder - right-click a track header > Folder to put tracks in it", 10, rowY + 4, getWidth() - 20, 16, juce::Justification::centredLeft);
+            return;
+        }
+        const float lineH = juce::jlimit (2.0f, 8.0f, (rowH - 12.0f) / (float) members.size());
+        for (int i = 0; i < members.size(); ++i)
+            for (auto* c : members[i]->getClips())
+            {
+                const auto pos = c->getPosition();
+                const float x0 = vs.beatToX (vs.timeToBeats (pos.getStart()), 0), x1 = vs.beatToX (vs.timeToBeats (pos.getEnd()), 0);
+                if (x1 < 0 || x0 > getWidth()) continue;
+                g.setColour (DawSession::trackColour (*members[i]).withAlpha (c->isMuted() ? 0.25f : 0.8f));
+                g.fillRoundedRectangle (x0, rowY + 6 + i * lineH, std::max (2.0f, x1 - x0), std::max (1.5f, lineH - 1.0f), 1.0f);
+            }
+    }
+
+    // ---------------------------------------------------------------- take lanes (comping)
+    void drawTakes (juce::Graphics& g, te::AudioTrack& t, int top, int h)
+    {
+        const auto col = DawSession::trackColour (t);
+        const int lanes = h / ArrangeView::takeLaneH;
+        for (int i = 0; i < lanes; ++i)
+        {
+            const int y = top + i * ArrangeView::takeLaneH;
+            g.setColour (juce::Colour (i % 2 ? 0xff151515 : 0xff181818)); g.fillRect (0, y, getWidth(), ArrangeView::takeLaneH - 1);
+        }
+        for (auto* c : t.getClips())
+        {
+            auto* ac = dynamic_cast<te::WaveAudioClip*> (c);
+            if (ac == nullptr) continue;
+            auto files = DawSession::takeFiles (*ac);
+            if (files.size() < 2) continue;
+            const auto pos = ac->getPosition();
+            const float x0 = vs.beatToX (vs.timeToBeats (pos.getStart()), 0), x1 = vs.beatToX (vs.timeToBeats (pos.getEnd()), 0);
+            if (x1 < 0 || x0 > getWidth()) continue;
+            const int cur = DawSession::currentTake (*ac);
+            const double srcStart = pos.getOffset().inSeconds() * ac->getSpeedRatio(), srcLen = pos.getLength().inSeconds() * ac->getSpeedRatio();
+            for (int i = 0; i < std::min (lanes, files.size()); ++i)
+            {
+                auto r = juce::Rectangle<float> (x0, (float) (top + i * ArrangeView::takeLaneH) + 2, std::max (2.0f, x1 - x0), (float) ArrangeView::takeLaneH - 5);
+                const bool on = i == cur;
+                g.setColour (on ? col.withAlpha (0.35f) : juce::Colour (0x22ffffff)); g.fillRoundedRectangle (r, 3.0f);
+                g.setColour (on ? col : juce::Colour (0xff7a7a7a));
+                fileThumb (files[i]).drawChannels (g, r.reduced (0, 2).toNearestInt(), { te::TimePosition::fromSeconds (srcStart), te::TimePosition::fromSeconds (srcStart + srcLen) }, 1.0f);
+                if (on) { g.setColour (col.brighter (0.4f)); g.drawRoundedRectangle (r, 3.0f, 1.5f); }
+            }
+        }
+        if (takeTrack == &t && takeDragging)
+        {   // the range being comped
+            const float a = vs.beatToX (std::min (takeFrom, takeTo), 0), b = vs.beatToX (std::max (takeFrom, takeTo), 0);
+            const int y = top + takeIndex * ArrangeView::takeLaneH;
+            g.setColour (juce::Colours::white.withAlpha (0.18f)); g.fillRect (juce::Rectangle<float> (a, (float) y, b - a, (float) ArrangeView::takeLaneH - 1));
+            g.setColour (juce::Colours::white); g.drawRect (juce::Rectangle<float> (a, (float) y, b - a, (float) ArrangeView::takeLaneH - 1), 1.0f);
+        }
+    }
+    te::SmartThumbnail& fileThumb (const juce::File& f)
+    {
+        const auto key = "take:" + f.getFullPathName();
+        auto it = thumbs.find (key);
+        if (it == thumbs.end())
+            it = thumbs.emplace (key, std::make_unique<te::SmartThumbnail> (vs.edit().engine, te::AudioFile (vs.edit().engine, f), *this, &vs.edit())).first;
+        return *it->second;
+    }
+    /** Which take lane (if any) is under the point */
+    bool takeHit (juce::Point<float> p, te::AudioTrack*& track, int& index)
+    {
+        int rowTop = 0;
+        auto* t = owner.trackAtY ((int) p.y, &rowTop);
+        if (t == nullptr) return false;
+        const int ch = owner.clipHeight (*t), tk = owner.takesHeight (*t);
+        if (tk == 0 || p.y < rowTop + ch || p.y >= rowTop + ch + tk) return false;
+        track = t; index = (int) ((p.y - rowTop - ch) / ArrangeView::takeLaneH);
+        return true;
+    }
+    bool takeMouseDown (const juce::MouseEvent& e)
+    {
+        te::AudioTrack* t = nullptr; int idx = 0;
+        if (! takeHit (e.position, t, idx)) return false;
+        vs.selectTrack (t);
+        takeTrack = t; takeIndex = idx; takeDragging = false;
+        takeFrom = takeTo = vs.snapBeat (vs.xToBeat (e.position.x, 0), e.mods.isShiftDown());
+        takeClickBeat = vs.xToBeat (e.position.x, 0);
+        return true;
+    }
+    void takeMouseDrag (const juce::MouseEvent& e)
+    {
+        if (e.getDistanceFromDragStart() > 3) takeDragging = true;
+        takeTo = vs.snapBeat (vs.xToBeat (e.position.x, 0), e.mods.isShiftDown());
+        repaint();
+    }
+    void takeMouseUp()
+    {
+        auto* t = takeTrack; takeTrack = nullptr;
+        if (t == nullptr) return;
+        // a click picks the take for the whole clip under the mouse; a drag comps just that range
+        te::TimeRange range;
+        if (takeDragging && std::abs (takeTo - takeFrom) > 1.0e-3) range = { vs.beatsToTime (std::min (takeFrom, takeTo)), vs.beatsToTime (std::max (takeFrom, takeTo)) };
+        else { const auto at = vs.beatsToTime (takeClickBeat); range = { at, at }; }
+        juce::Array<te::WaveAudioClip*> targets;
+        for (auto* c : t->getClips())
+            if (auto* ac = dynamic_cast<te::WaveAudioClip*> (c); ac != nullptr && DawSession::takeFiles (*ac).size() > takeIndex)
+            {
+                const auto cr = ac->getPosition().time;
+                if (range.getLength() > 0s ? cr.overlaps (range) : (cr.contains (range.getStart())))
+                    targets.add (ac);
+            }
+        for (auto* ac : targets)
+        {
+            if (range.getLength() > 0s) vs.session.compTake (*ac, takeIndex, range);
+            else { vs.edit().getUndoManager().beginNewTransaction ("Choose take"); DawSession::setTake (*ac, takeIndex); }
+        }
+        takeDragging = false;
+        owner.repaint();
+    }
+    te::AudioTrack* takeTrack = nullptr; int takeIndex = 0; bool takeDragging = false; double takeFrom = 0, takeTo = 0, takeClickBeat = 0;
 
     // ---------------------------------------------------------------- automation lane
     float laneValueToY (te::AutomatableParameter& p, float v, int top, int h) const
@@ -527,7 +771,7 @@ public:
         int rowTop = 0;
         auto* t = owner.trackAtY ((int) p.y, &rowTop);
         if (t == nullptr) return {};
-        const int ch = owner.clipHeight (*t), lh = owner.laneHeight (*t);
+        const int ch = owner.clipHeight (*t) + owner.takesHeight (*t), lh = owner.laneHeight (*t);
         if (lh == 0 || p.y < rowTop + ch) return {};
         LaneHit r { t, dawui::laneParam (*t), rowTop + ch, lh, -1 };
         if (r.param == nullptr) return {};
@@ -585,7 +829,7 @@ public:
         repaint();
     }
     te::AudioTrack* autoTrack = nullptr; te::AutomatableParameter::Ptr autoParam; int autoPoint = -1, autoTop = 0, autoH = 0;
-    void forgetEdit() { autoTrack = nullptr; autoParam = nullptr; autoPoint = -1; warpDragIndex = -1; drag = Drag::none; }
+    void forgetEdit() { autoTrack = nullptr; autoParam = nullptr; autoPoint = -1; warpDragIndex = -1; drag = Drag::none; takeTrack = nullptr; thumbs.clear(); }
 
     // ---------------------------------------------------------------- mouse
     enum class Drag { none, move, trimStart, trimEnd, fadeIn, fadeOut };
@@ -623,7 +867,8 @@ public:
     void mouseDown (const juce::MouseEvent& e) override
     {
         owner.grabKeyboardFocus();
-        autoParam = nullptr; autoPoint = -1; warpDragIndex = -1;
+        autoParam = nullptr; autoPoint = -1; warpDragIndex = -1; takeTrack = nullptr;
+        if (! e.mods.isPopupMenu() && takeMouseDown (e)) return;
         if (laneMouseDown (e)) return;
         const auto h = hitTest (e.position);
         if (auto* wc = dynamic_cast<te::WaveAudioClip*> (h.clip); wc != nullptr && wc->getWarpTime() && ! e.mods.isPopupMenu() && h.zone == Drag::move)
@@ -659,11 +904,14 @@ public:
             if (auto* t = owner.trackAtY ((int) e.position.y)) vs.selectTrack (t);
             if (! e.mods.isPopupMenu())
                 vs.edit().getTransport().setPosition (vs.beatsToTime (std::max (0.0, vs.snapBeat (vs.xToBeat (e.position.x, 0), e.mods.isShiftDown()))));
+            else if (auto* t = owner.trackAtY ((int) e.position.y); t != nullptr && DawSession::kindOf (*t) == DawSession::TrackKind::midi)
+                emptyMenu (*t, e.position.x);
         }
         owner.repaint();
     }
     void mouseDrag (const juce::MouseEvent& e) override
     {
+        if (takeTrack != nullptr) { takeMouseDrag (e); return; }
         if (autoParam != nullptr) { laneMouseDrag (e); return; }
         if (warpDragIndex >= 0)
         {
@@ -743,9 +991,10 @@ public:
         }
         owner.repaint();
     }
-    void mouseUp (const juce::MouseEvent&) override { drag = Drag::none; autoParam = nullptr; warpDragIndex = -1; repaint(); }
+    void mouseUp (const juce::MouseEvent&) override { if (takeTrack != nullptr) takeMouseUp(); drag = Drag::none; autoParam = nullptr; warpDragIndex = -1; repaint(); }
     void mouseDoubleClick (const juce::MouseEvent& e) override
     {
+        { te::AudioTrack* tt = nullptr; int ti = 0; if (takeHit (e.position, tt, ti)) return; }
         if (auto* wc = dynamic_cast<te::WaveAudioClip*> (hitTest (e.position).clip); wc != nullptr && wc->getWarpTime())
         {   // double-click a warp marker (not the first / last) to remove it
             const int idx = warpMarkerAt (*wc, e.position.x);
@@ -761,7 +1010,7 @@ public:
         const auto h = hitTest (e.position);
         if (h.clip != nullptr)
         {
-            if (dynamic_cast<te::MidiClip*> (h.clip) != nullptr && vs.onOpenPianoRoll) { vs.selectClip (h.clip); vs.onOpenPianoRoll(); }
+            if ((dynamic_cast<te::MidiClip*> (h.clip) != nullptr || dynamic_cast<te::StepClip*> (h.clip) != nullptr) && vs.onOpenPianoRoll) { vs.selectClip (h.clip); vs.onOpenPianoRoll(); }
             return;
         }
         if (auto* t = owner.trackAtY ((int) e.position.y))
@@ -772,6 +1021,24 @@ public:
                 auto clip = vs.session.insertMidiClip (*t, vs.beatsToTime (std::max (0.0, bar)), vs.beatsToTime (bar + num) - vs.beatsToTime (bar));
                 if (clip) { vs.selectClip (clip.get()); if (vs.onOpenPianoRoll) vs.onOpenPianoRoll(); }
             }
+    }
+    /** Right-click on an empty part of an instrument track */
+    void emptyMenu (te::AudioTrack& t, float x)
+    {
+        juce::PopupMenu m;
+        m.addItem (1, "New MIDI clip here (1 bar)");
+        m.addItem (2, "New step-sequencer clip here (drums, 1 bar)");
+        m.showMenuAsync ({}, [this, tp = te::AudioTrack::Ptr (&t), x] (int r)
+        {
+            if (r == 0 || tp == nullptr) return;
+            const int num = vs.beatsPerBarAt (vs.xToBeat (x, 0));
+            const double bar = std::floor (vs.xToBeat (x, 0) / num) * num;
+            const te::TimeRange range { vs.beatsToTime (std::max (0.0, bar)), vs.beatsToTime (std::max (0.0, bar) + num) };
+            vs.edit().getUndoManager().beginNewTransaction ("New clip");
+            te::Clip* c = r == 1 ? (te::Clip*) vs.session.insertMidiClip (*tp, range.getStart(), range.getLength()).get()
+                                 : tp->insertNewClip (te::TrackItem::Type::step, "Steps", range, nullptr);
+            if (c != nullptr) { vs.selectClip (c); if (vs.onOpenPianoRoll) vs.onOpenPianoRoll(); }
+        });
     }
     void clipMenu (te::Clip& c, const juce::MouseEvent&)
     {
@@ -796,6 +1063,16 @@ public:
             m.addSeparator();
             m.addItem (15, "Elastic audio (warp markers)", true, ac->getWarpTime());
             m.addItem (14, "Separate stems (AI)...");
+            if (auto files = DawSession::takeFiles (*ac); files.size() > 1)
+            {
+                juce::PopupMenu tk;
+                for (int i = 0; i < files.size(); ++i) tk.addItem (400 + i, "Take " + juce::String (i + 1), true, DawSession::currentTake (*ac) == i);
+                tk.addSeparator();
+                tk.addItem (30, "Show take lanes (drag across a take to comp)");
+                tk.addItem (31, "Keep the current take only");
+                tk.addItem (32, "Put every take on its own track");
+                m.addSubMenu ("Takes (" + juce::String (files.size()) + ")", tk);
+            }
         }
         else if (auto* mc = dynamic_cast<te::MidiClip*> (&c))
         {
@@ -804,6 +1081,8 @@ public:
             m.addItem (21, "Quantise notes to grid");
             juce::ignoreUnused (mc);
         }
+        m.addSeparator();
+        m.addItem (40, "Copy to the clip launcher (next free slot)");
         m.showMenuAsync ({}, [this, id = c.itemID] (int r)
         {
             auto* c = vs.getSelectedClip(); if (c == nullptr || c->itemID != id) return;
@@ -827,6 +1106,21 @@ public:
             else if (ac != nullptr && r == 14 && vs.onSeparateClip) vs.onSeparateClip (ac);
             else if (ac != nullptr && r == 15) enableWarpMarkers (*ac, ! ac->getWarpTime());
             else if (r == 20 && vs.onOpenPianoRoll) vs.onOpenPianoRoll();
+            else if (ac != nullptr && r >= 400 && r < 500) { vs.edit().getUndoManager().beginNewTransaction ("Choose take"); DawSession::setTake (*ac, r - 400); }
+            else if (ac != nullptr && r == 30) { if (auto* t = ac->getTrack()) t->state.setProperty ("vegaTakesShown", true, nullptr); owner.resized(); }
+            else if (ac != nullptr && r == 31) { vs.edit().getUndoManager().beginNewTransaction ("Keep take"); DawSession::keepCurrentTakeOnly (*ac); owner.resized(); }
+            else if (ac != nullptr && r == 32) { vs.session.unpackTakes (*ac); owner.rebuildHeaders(); }
+            else if (r == 40)
+            {
+                if (auto* t = dynamic_cast<te::AudioTrack*> (c->getTrack()))
+                {
+                    int sc = 0; vs.session.ensureScenes (8);
+                    while (DawSession::slotClip (*t, sc) != nullptr) ++sc;
+                    vs.session.ensureScenes (sc + 1);
+                    vs.edit().getUndoManager().beginNewTransaction ("Copy to launcher");
+                    if (vs.session.copyToSlot (*c, *t, sc) != nullptr && vs.onShowSession) vs.onShowSession();
+                }
+            }
             else if (r == 21) if (auto* mc = dynamic_cast<te::MidiClip*> (c)) quantise (*mc);
             owner.repaint();
         });
@@ -863,18 +1157,40 @@ public:
         const float lx0 = vs.beatToX (vs.timeToBeats (lr.getStart()), 0), lx1 = vs.beatToX (vs.timeToBeats (lr.getEnd()), 0);
         g.setColour ((tr.looping ? VegaColours::accent : VegaColours::textDim).withAlpha (tr.looping ? 0.35f : 0.15f));
         g.fillRect (juce::Rectangle<float> (lx0, 0, lx1 - lx0, 9.0f));
-        const int num = vs.edit().tempoSequence.getTimeSig (0)->numerator;
         const double first = std::floor (vs.scrollBeats), last = vs.xToBeat ((float) getWidth(), 0);
         g.setFont (VegaFonts::ui (10.5f, true));
         for (double b = first; b <= last; b += 1.0)
         {
             const float x = vs.beatToX (b, 0);
-            const bool bar = ((int) b % num) == 0;
+            const bool bar = vs.isBarStart (b);
             if (! bar && vs.pixelsPerBeat < 10) continue;
             g.setColour (bar ? VegaColours::text : VegaColours::textDim.withAlpha (0.5f));
             g.drawVerticalLine ((int) x, bar ? 12.0f : 21.0f, (float) getHeight());
-            if (bar && (vs.pixelsPerBeat * num > 28 || ((int) b / num) % 4 == 0))
-                g.drawText (juce::String ((int) b / num + 1), (int) x + 3, 10, 40, 14, juce::Justification::left);
+            if (bar)
+            {
+                const int barNum = vs.barNumber (b);
+                if (vs.pixelsPerBeat * vs.beatsPerBarAt (b) > 28 || (barNum - 1) % 4 == 0)
+                    g.drawText (juce::String (barNum), (int) x + 3, 10, 40, 14, juce::Justification::left);
+            }
+        }
+        // tempo and time-signature changes (the first ones are in the transport bar)
+        auto& ts = vs.edit().tempoSequence;
+        g.setFont (VegaFonts::ui (9.0f, true));
+        for (int i = 1; i < ts.getNumTempos(); ++i)
+        {
+            auto* t = ts.getTempo (i);
+            const float x = vs.beatToX (t->getStartBeat().inBeats(), 0);
+            if (x < -60 || x > getWidth()) continue;
+            g.setColour (VegaColours::gold); g.fillRect (x, 21.0f, 1.5f, (float) getHeight() - 21);
+            g.drawText (juce::String (t->getBpm(), 1) + " BPM", (int) x + 3, getHeight() - 11, 70, 10, juce::Justification::left);
+        }
+        for (int i = 1; i < ts.getNumTimeSigs(); ++i)
+        {
+            auto* sg = ts.getTimeSig (i);
+            const float x = vs.beatToX (sg->getStartBeat().inBeats(), 0);
+            if (x < -40 || x > getWidth()) continue;
+            g.setColour (juce::Colour (0xffb183f2)); g.fillRect (x, 21.0f, 1.5f, (float) getHeight() - 21);
+            g.drawText (sg->getStringTimeSig(), (int) x + 3, getHeight() - 21, 40, 10, juce::Justification::left);
         }
         // markers
         for (auto& m : vs.edit().getMarkerManager().getMarkers())
@@ -883,7 +1199,8 @@ public:
             if (mx < -40 || mx > getWidth()) continue;
             juce::Path flag; flag.addTriangle (mx, 10, mx + 9, 14, mx, 18);
             g.setColour (juce::Colour (0xfff2867c)); g.fillPath (flag); g.fillRect (mx, 10.0f, 1.2f, (float) getHeight() - 10);
-            g.setFont (VegaFonts::ui (9.0f, true)); g.drawText (juce::String (m->getMarkerID()), (int) mx + 10, 9, 24, 10, juce::Justification::left);
+            const auto label = m->getName().isNotEmpty() && m->getName() != juce::String (m->getMarkerID()) ? m->getName() : juce::String (m->getMarkerID());
+            g.setFont (VegaFonts::ui (9.0f, true)); g.drawText (label, (int) mx + 10, 9, 90, 10, juce::Justification::left);
         }
         const float px = vs.beatToX (vs.timeToBeats (tr.getPosition()), 0);
         juce::Path tri; tri.addTriangle (px - 6, 18, px + 6, 18, px, (float) getHeight());
@@ -892,6 +1209,7 @@ public:
     }
     void mouseDown (const juce::MouseEvent& e) override
     {
+        if (e.mods.isPopupMenu()) { menu (e); return; }
         loopDrag = e.position.y < 10 || e.mods.isShiftDown();
         startBeat = vs.snapBeat (vs.xToBeat (e.position.x, 0));
         if (! loopDrag) setPos (e);
@@ -908,9 +1226,76 @@ public:
     }
     void mouseDoubleClick (const juce::MouseEvent& e) override
     {
-        if (e.position.y < 10) { auto& tr = vs.edit().getTransport(); tr.looping = ! tr.looping.get(); repaint(); }
+        if (e.position.y < 10) { auto& tr = vs.edit().getTransport(); tr.looping = ! tr.looping.get(); repaint(); return; }
+        if (auto* m = markerNear (e.position.x)) renameMarker (m);
     }
 private:
+    te::MarkerClip* markerNear (float x)
+    {
+        for (auto& m : vs.edit().getMarkerManager().getMarkers())
+            if (std::abs (vs.beatToX (vs.timeToBeats (m->getPosition().getStart()), 0) - x) < 8) return m;
+        return nullptr;
+    }
+    void renameMarker (te::MarkerClip* m)
+    {
+        auto* w = new juce::AlertWindow ("Rename marker", {}, juce::MessageBoxIconType::NoIcon);
+        w->addTextEditor ("name", m->getName()); w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey)); w->addButton ("Cancel", 0);
+        w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, id = m->itemID] (int r)
+        {
+            if (r != 1) return;
+            for (auto& mm : vs.edit().getMarkerManager().getMarkers()) if (mm->itemID == id) mm->setName (w->getTextEditorContents ("name"));
+            repaint();
+        }), true);
+    }
+    void menu (const juce::MouseEvent& e)
+    {
+        const auto at = vs.beatsToTime (std::max (0.0, vs.snapBeat (vs.xToBeat (e.position.x, 0))));
+        auto* near = markerNear (e.position.x);
+        juce::PopupMenu m;
+        m.addItem (1, "Add marker here");
+        if (near != nullptr) { m.addItem (2, "Rename marker..."); m.addItem (3, "Delete marker"); }
+        m.addSeparator();
+        m.addItem (4, "Tempo change here...");
+        m.addItem (5, "Time signature change here (next bar)...");
+        m.addSeparator();
+        m.addItem (6, "Markers & tempo list...");
+        m.showMenuAsync ({}, [this, at, nearID = near != nullptr ? near->itemID : te::EditItemID()] (int r)
+        {
+            auto& ss = vs.session;
+            auto find = [this, nearID] () -> te::MarkerClip* { for (auto* mm : vs.edit().getMarkerManager().getMarkers()) if (mm->itemID == nearID) return mm; return nullptr; };
+            if (r == 1) ss.addMarker (at);
+            else if (r == 2) { if (auto* mk = find()) renameMarker (mk); }
+            else if (r == 3) { if (auto* mk = find()) mk->removeFromParent(); }
+            else if (r == 4)
+            {
+                auto* w = new juce::AlertWindow ("Tempo change", "New tempo from " + dawui::formatBarsBeats (vs.edit(), at) + " on:", juce::MessageBoxIconType::NoIcon);
+                w->addTextEditor ("bpm", juce::String (vs.edit().tempoSequence.getBpmAt (at), 1), "BPM");
+                w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey)); w->addButton ("Cancel", 0);
+                w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, at] (int res)
+                {
+                    const double bpm = w->getTextEditorContents ("bpm").getDoubleValue();
+                    if (res == 1 && bpm >= 20 && bpm <= 400) { vs.edit().getUndoManager().beginNewTransaction ("Tempo change"); vs.session.addTempoChange (at, bpm); }
+                    repaint();
+                }), true);
+            }
+            else if (r == 5)
+            {
+                auto* w = new juce::AlertWindow ("Time signature change", "From the next bar line on:", juce::MessageBoxIconType::NoIcon);
+                w->addComboBox ("sig", { "4/4", "3/4", "6/8", "7/8", "5/4", "2/4", "12/8" });
+                w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey)); w->addButton ("Cancel", 0);
+                w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, at] (int res)
+                {
+                    if (res != 1) return;
+                    const auto parts = juce::StringArray::fromTokens (w->getComboBoxComponent ("sig")->getText(), "/", {});
+                    vs.edit().getUndoManager().beginNewTransaction ("Time signature change");
+                    vs.session.addTimeSigChange (at, parts[0].getIntValue(), parts[1].getIntValue());
+                    repaint();
+                }), true);
+            }
+            else if (r == 6 && vs.onShowSongMap) vs.onShowSongMap();
+            repaint();
+        });
+    }
     void setPos (const juce::MouseEvent& e)
     {
         vs.edit().getTransport().setPosition (vs.beatsToTime (std::max (0.0, vs.snapBeat (vs.xToBeat (e.position.x, 0), e.mods.isShiftDown()))));
@@ -950,7 +1335,7 @@ void ArrangeView::editChanged()
 void ArrangeView::rebuildHeaders()
 {
     headers.clear();
-    for (auto* t : vs.session.getTracks())
+    for (auto* t : visibleTracks())
     {
         auto* h = headers.add (new TrackHeader (*this, *t));
         addAndMakeVisible (h);
@@ -958,11 +1343,11 @@ void ArrangeView::rebuildHeaders()
     resized(); repaint();
 }
 
-int ArrangeView::totalTracksHeight() { int h = 0; for (auto* t : vs.session.getTracks()) h += trackHeight (*t); return h; }
+int ArrangeView::totalTracksHeight() { int h = 0; for (auto* t : visibleTracks()) h += trackHeight (*t); return h; }
 te::AudioTrack* ArrangeView::trackAtY (int y, int* rowTop)
 {
     int top = -vs.scrollY;
-    for (auto* t : vs.session.getTracks())
+    for (auto* t : visibleTracks())
     {
         const int h = trackHeight (*t);
         if (y >= top && y < top + h) { if (rowTop) *rowTop = top; return t; }
@@ -970,7 +1355,7 @@ te::AudioTrack* ArrangeView::trackAtY (int y, int* rowTop)
     }
     return nullptr;
 }
-int ArrangeView::trackTop (te::AudioTrack& tr) { int top = -vs.scrollY; for (auto* t : vs.session.getTracks()) { if (t == &tr) return top; top += trackHeight (*t); } return top; }
+int ArrangeView::trackTop (te::AudioTrack& tr) { int top = -vs.scrollY; for (auto* t : visibleTracks()) { if (t == &tr) return top; top += trackHeight (*t); } return top; }
 
 void ArrangeView::resized()
 {
@@ -1100,4 +1485,20 @@ void ArrangeView::clearAll()
 {
     headers.clear();
     if (lanes != nullptr) lanes->forgetEdit();
+}
+
+int ArrangeView::maxTakes (te::Track& t)
+{
+    int n = 0;
+    if (auto* ct = dynamic_cast<te::ClipTrack*> (&t))
+        for (auto* c : ct->getClips())
+            if (dynamic_cast<te::WaveAudioClip*> (c) != nullptr) n = std::max (n, c->state.getChildWithName (te::IDs::TAKES).getNumChildren());
+    return n;
+}
+
+juce::Array<te::AudioTrack*> ArrangeView::visibleTracks() const
+{
+    juce::Array<te::AudioTrack*> r;
+    for (auto* t : vs.session.getTracks()) if (! vs.session.isHiddenByFolder (*t)) r.add (t);
+    return r;
 }

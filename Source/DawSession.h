@@ -40,13 +40,14 @@ public:
     bool saveProject();                               // to the current file (false if untitled)
     bool saveProjectAs (const juce::File&);
     juce::File getProjectFile() const { return projectFile; }
+    void setProjectFile (const juce::File& f) { projectFile = f; editPtr->editFileRetriever = [f] { return f; }; }   // after recovering an autosave
     bool hasUnsavedChanges() const;
 
     // ---- tracks
     te::AudioTrack* addTrack (TrackKind, const juce::String& name = {});
     static TrackKind kindOf (const te::Track&);
     juce::Array<te::AudioTrack*> getTracks (bool includeBuses = true) const;
-    juce::Array<te::AudioTrack*> getBuses() const;
+    juce::Array<te::AudioTrack*> getBuses() const;                      // includes folders (they're buses too)
     void deleteTrack (te::Track&);
     void moveTrack (te::AudioTrack&, int newIndex);
     static juce::Colour trackColour (const te::Track&);
@@ -91,9 +92,78 @@ public:
     te::TimeDuration barLength() const;
     te::TimePosition snap (te::TimePosition, int gridDivisionsPerBeat) const;
 
+    void addTempoChange (te::TimePosition, double bpm);                     // tempo changes later in the song
+    void addTimeSigChange (te::TimePosition, int num, int den);             // snapped to the bar
+    te::MarkerClip* addMarker (te::TimePosition, const juce::String& name = {});
+
+    // ---- folders: a folder is a bus with its member tracks routed into it, shown nested (and collapsible)
+    te::AudioTrack* addFolder (const juce::String& name = {});
+    static bool isFolder (const te::Track&);
+    te::AudioTrack* folderOf (const te::AudioTrack&) const;
+    juce::Array<te::AudioTrack*> folderMembers (const te::AudioTrack& folder) const;
+    void moveToFolder (te::AudioTrack&, te::AudioTrack* folder);            // nullptr = take it out of its folder
+    static bool isCollapsed (const te::Track& t) { return (bool) t.state.getProperty ("vegaCollapsed", false); }
+    static void setCollapsed (te::Track& t, bool c) { t.state.setProperty ("vegaCollapsed", c, nullptr); }
+    bool isHiddenByFolder (const te::AudioTrack&) const;                    // inside a collapsed folder
+    te::AudioTrack* duplicateTrack (te::AudioTrack&);
+
     // ---- export
+    struct ExportOptions
+    {
+        enum class Format { wav, aiff, flac, ogg, mp3 };
+        enum class Normalise { none, peak, lufs };
+        Format format = Format::wav;
+        int bitDepth = 24;
+        double sampleRate = 48000.0;
+        Normalise normalise = Normalise::none;
+        float peakDb = -0.3f, lufs = -14.0f;
+        std::optional<te::TimeRange> range;            // default: the whole song
+        double tailSeconds = 2.0;                      // let reverbs / delays ring out
+        bool includeMaster = true;                     // master-bus processing (stems: off by default)
+    };
+    static juce::String extensionFor (ExportOptions::Format);
+    /** Path of lame.exe / lame for MP3 export (MP3 encoding isn't built in). Empty if not found. */
+    static juce::File& lameExecutable();
+    static juce::File findLame();
+    bool exportMix (const juce::File&, const ExportOptions&);
     bool exportWav (const juce::File&, std::optional<te::TimeRange> range = std::nullopt);
+    /** One file per track (buses and folders included). Returns the files written. */
+    juce::Array<juce::File> exportStems (const juce::File& folder, const ExportOptions&, std::function<bool (float progress, const juce::String& name)> progress = nullptr);
+    /** Render a track (with its plug-ins) over the range to audio on a new track under it. The original is muted. */
+    te::AudioTrack* bounceToNewTrack (te::AudioTrack&, te::TimeRange, bool withPlugins = true);
+    /** Join every clip on the track that overlaps the range into one clip (audio is rendered without plug-ins, MIDI is merged). */
+    te::Clip* consolidate (te::AudioTrack&, te::TimeRange);
+    juce::File mediaFolder (const juce::String& sub) const;                  // next to the project, or in Documents
     te::TimeRange contentRange() const;
+
+    // ---- takes / comping (loop recording puts every pass in one clip as takes)
+    static juce::Array<juce::File> takeFiles (te::WaveAudioClip&);
+    static int currentTake (te::WaveAudioClip&);
+    static void setTake (te::WaveAudioClip&, int index);
+    static void addTakes (te::WaveAudioClip&, const juce::Array<juce::File>&);
+    /** Use take 'index' for the part of the clip inside 'range' (the clip is split at the range edges). Returns that piece. */
+    te::WaveAudioClip* compTake (te::WaveAudioClip&, int index, te::TimeRange range);
+    static void keepCurrentTakeOnly (te::WaveAudioClip&);
+    juce::Array<te::AudioTrack*> unpackTakes (te::WaveAudioClip&);          // each take on its own new track
+
+    // ---- clip launcher (session view)
+    int numScenes() const;
+    void ensureScenes (int);                                                // also gives every track that many slots
+    void insertScene (int index);
+    void deleteScene (int index);
+    static te::ClipSlot* slot (te::AudioTrack&, int scene);
+    static te::Clip* slotClip (te::AudioTrack&, int scene);
+    te::MidiClip* createSlotMidiClip (te::AudioTrack&, int scene, int bars = 4);
+    te::Clip* insertSlotFile (te::AudioTrack&, int scene, const juce::File&);
+    te::Clip* copyToSlot (te::Clip&, te::AudioTrack&, int scene);
+    te::Clip* copyToArrangement (te::Clip& slotClip, te::TimePosition at);
+    void launchClip (te::Clip&);
+    void stopTrackSlots (te::AudioTrack&);
+    void launchScene (int scene);
+    void stopAllSlots();
+    void backToArrangement();
+    static bool isSlotPlaying (te::Clip&);
+    static bool isSlotQueued (te::Clip&);
 
 private:
     void attachEdit (std::unique_ptr<te::Edit>);

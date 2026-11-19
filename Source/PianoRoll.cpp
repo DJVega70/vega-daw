@@ -5,6 +5,12 @@ PianoRoll::PianoRoll (ViewState& v) : vs (v)
     gridBox.addItemList ({ "Grid 1/4", "Grid 1/8", "Grid 1/16", "Grid 1/32", "Grid 1/8T", "Grid 1/16T", "Grid Off" }, 1);
     gridBox.setSelectedId (3, juce::dontSendNotification);
     addAndMakeVisible (gridBox);
+    laneBox.addItemList ({ "Velocity", "Mod wheel (CC1)", "Breath (CC2)", "Volume (CC7)", "Pan (CC10)", "Expression (CC11)", "Sustain pedal (CC64)",
+                           "Filter cutoff (CC74)", "Resonance (CC71)", "Pitch bend", "Aftertouch" }, 1);
+    laneBox.setSelectedId (1, juce::dontSendNotification);
+    laneBox.setTooltip ("What the bottom lane edits. Draw controller moves with the mouse, right-click to erase.");
+    laneBox.onChange = [this] { repaint(); };
+    addAndMakeVisible (laneBox);
     quantBtn.setButtonText ("QUANTISE"); clearBtn.setButtonText ("CLEAR"); closeBtn.setButtonText ("CLOSE");
     quantBtn.onClick = [this]
     {
@@ -19,6 +25,8 @@ PianoRoll::PianoRoll (ViewState& v) : vs (v)
     for (auto* b : { &quantBtn, &clearBtn, &closeBtn }) addAndMakeVisible (b);
     title.setFont (VegaFonts::ui (12.0f, true)); title.setColour (juce::Label::textColourId, VegaColours::accent);
     addAndMakeVisible (title);
+    addChildComponent (stepEditor);
+    stepEditor.onClose = [this] { if (onClose) onClose(); };
     setWantsKeyboardFocus (true);
     startTimerHz (25);
 }
@@ -38,6 +46,8 @@ void PianoRoll::resized()
     title.setBounds (keysW + 6, 4, 360, 24);
     closeBtn.setBounds (getWidth() - 76, 5, 70, 22); clearBtn.setBounds (getWidth() - 152, 5, 70, 22);
     quantBtn.setBounds (getWidth() - 248, 5, 90, 22); gridBox.setBounds (getWidth() - 360, 5, 106, 22);
+    laneBox.setBounds (getWidth() - 520, 5, 152, 22);
+    stepEditor.setBounds (getLocalBounds());
 }
 
 void PianoRoll::paint (juce::Graphics& g)
@@ -104,13 +114,16 @@ void PianoRoll::paint (juce::Graphics& g)
     // velocity lane
     auto va = velArea();
     g.setColour (juce::Colour (0xff121212)); g.fillRect (va);
-    g.setColour (VegaColours::textDim); g.setFont (VegaFonts::ui (9.5f, true)); g.drawText ("VELOCITY", 4, va.getY(), keysW - 8, 14, juce::Justification::left);
-    for (auto* n : c->getSequence().getNotes())
-    {
-        const float x = beatToX (n->getStartBeat().inBeats()), h = (va.getHeight() - 8) * n->getVelocity() / 127.0f;
-        if (x < keysW) continue;
-        g.setColour (col); g.fillRect (x, (float) va.getBottom() - h - 2, 3.0f, h); g.fillEllipse (x - 2, (float) va.getBottom() - h - 5, 7, 7);
-    }
+    g.setColour (VegaColours::textDim); g.setFont (VegaFonts::ui (9.5f, true));
+    g.drawFittedText (laneName (laneType()).toUpperCase(), 4, va.getY() + 2, keysW - 8, va.getHeight() - 4, juce::Justification::topLeft, 3);
+    if (laneType() >= 0) drawControllerLane (g, *c, col);
+    else
+        for (auto* n : c->getSequence().getNotes())
+        {
+            const float x = beatToX (n->getStartBeat().inBeats()), h = (va.getHeight() - 8) * n->getVelocity() / 127.0f;
+            if (x < keysW) continue;
+            g.setColour (col); g.fillRect (x, (float) va.getBottom() - h - 2, 3.0f, h); g.fillEllipse (x - 2, (float) va.getBottom() - h - 5, 7, 7);
+        }
     g.setColour (VegaColours::line); g.drawHorizontalLine (va.getY(), 0, (float) getWidth()); g.drawHorizontalLine (0, 0, (float) getWidth());
 }
 
@@ -147,7 +160,12 @@ void PianoRoll::mouseDown (const juce::MouseEvent& e)
     auto* c = clip(); if (c == nullptr) return;
     auto* um = &vs.edit().getUndoManager();
     mode = Mode::none; dragNote = nullptr;
-    if (velArea().contains (e.getPosition())) { mode = Mode::velocity; um->beginNewTransaction ("Velocity"); mouseDrag (e); return; }
+    if (velArea().contains (e.getPosition()))
+    {
+        mode = Mode::velocity; lastCcBeat = -1.0;
+        um->beginNewTransaction (laneType() >= 0 ? "Draw " + laneName (laneType()) : juce::String ("Velocity"));
+        mouseDrag (e); return;
+    }
     if (! gridArea().contains (e.getPosition()))
     {
         if (e.x < keysW && e.y > toolbarH) audition (yToNote ((float) e.y), 100);
@@ -182,6 +200,7 @@ void PianoRoll::mouseDrag (const juce::MouseEvent& e)
     auto* c = clip(); if (c == nullptr) return;
     auto* um = &vs.edit().getUndoManager();
     const bool free = e.mods.isShiftDown();
+    if (mode == Mode::velocity && laneType() >= 0) { paintController (*c, e, e.mods.isPopupMenu()); return; }
     if (mode == Mode::velocity)
     {
         const auto va = velArea();
@@ -232,4 +251,89 @@ bool PianoRoll::keyPressed (const juce::KeyPress& k)
 {
     if (k == juce::KeyPress::escapeKey && onClose) { onClose(); return true; }
     return false;
+}
+
+//============================================================================== controller lane
+int PianoRoll::laneType() const
+{
+    static const int types[] { -1, 1, 2, 7, 10, 11, 64, 74, 71, te::MidiControllerEvent::pitchWheelType, te::MidiControllerEvent::channelPressureType };
+    return types[juce::jlimit (0, 10, laneBox.getSelectedItemIndex())];
+}
+
+juce::String PianoRoll::laneName (int type)
+{
+    if (type < 0) return "Velocity";
+    if (type == te::MidiControllerEvent::pitchWheelType) return "Pitch bend";
+    if (type == te::MidiControllerEvent::channelPressureType) return "Aftertouch";
+    if (type == 64) return "Sustain";
+    if (type == 1) return "Mod wheel";
+    if (type == 11) return "Expression";
+    return "CC " + juce::String (type);
+}
+
+float PianoRoll::ccToY (int v) const
+{
+    const auto va = velArea();
+    return (float) va.getBottom() - 3.0f - (va.getHeight() - 8) * juce::jlimit (0, 16383, v) / 16383.0f;
+}
+int PianoRoll::yToCc (float y) const
+{
+    const auto va = velArea();
+    const int v = (int) std::round (((float) va.getBottom() - 3.0f - y) / (float) (va.getHeight() - 8) * 16383.0f);
+    if (laneType() == 64) return v >= 8192 ? 127 << 7 : 0;             // the pedal is on or off
+    return juce::jlimit (0, 16383, v);
+}
+
+void PianoRoll::drawControllerLane (juce::Graphics& g, te::MidiClip& c, juce::Colour col)
+{
+    const int type = laneType();
+    const auto va = velArea();
+    juce::Array<te::MidiControllerEvent*> evs;
+    for (auto* e : c.getSequence().getControllerEvents()) if (e->getType() == type) evs.add (e);
+    if (type == te::MidiControllerEvent::pitchWheelType)
+    {   // centre line
+        g.setColour (juce::Colours::white.withAlpha (0.12f)); g.drawHorizontalLine ((int) ccToY (8192), (float) keysW, (float) getWidth());
+    }
+    if (evs.isEmpty())
+    {
+        g.setColour (VegaColours::textDim.withAlpha (0.7f)); g.setFont (VegaFonts::ui (10.5f));
+        g.drawText ("Draw " + laneName (type) + " moves here (right-click to erase)", va.withTrimmedLeft (keysW + 8), juce::Justification::centredLeft);
+        return;
+    }
+    juce::Path p, fill;
+    const float x0 = beatToX (evs[0]->getBeatPosition().inBeats());
+    p.startNewSubPath (x0, ccToY (evs[0]->getControllerValue()));
+    for (int i = 1; i < evs.size(); ++i)
+    {   // controller values hold until the next one: draw steps
+        const float x = beatToX (evs[i]->getBeatPosition().inBeats());
+        p.lineTo (x, ccToY (evs[i - 1]->getControllerValue()));
+        p.lineTo (x, ccToY (evs[i]->getControllerValue()));
+    }
+    p.lineTo ((float) getWidth(), ccToY (evs.getLast()->getControllerValue()));
+    fill = p; fill.lineTo ((float) getWidth(), (float) va.getBottom()); fill.lineTo (x0, (float) va.getBottom()); fill.closeSubPath();
+    g.saveState(); g.reduceClipRegion (va.withTrimmedLeft (keysW));
+    g.setColour (col.withAlpha (0.18f)); g.fillPath (fill);
+    g.setColour (col); g.strokePath (p, juce::PathStrokeType (1.5f));
+    for (auto* e : evs) { const float x = beatToX (e->getBeatPosition().inBeats()); g.fillEllipse (x - 2.5f, ccToY (e->getControllerValue()) - 2.5f, 5, 5); }
+    g.restoreState();
+}
+
+void PianoRoll::paintController (te::MidiClip& c, const juce::MouseEvent& e, bool erase)
+{
+    auto* um = &vs.edit().getUndoManager();
+    const int type = laneType();
+    static const double divs[] { 1, 2, 4, 8, 3, 6, 0 };
+    double step = divs[juce::jlimit (0, 6, gridBox.getSelectedItemIndex())];
+    step = step > 0 ? 1.0 / step : 1.0 / 16.0;
+    step = std::min (step, 1.0 / 8.0);                       // draw at least 1/32-note detail... at most 1/8 apart
+    const double beat = std::max (0.0, std::floor (xToBeat (e.position.x) / step) * step);
+    // fill any gap from a fast mouse move, so a drawn line has no holes
+    const double from = lastCcBeat >= 0 ? std::min (lastCcBeat, beat) : beat, to = lastCcBeat >= 0 ? std::max (lastCcBeat, beat) : beat;
+    for (double b = from; b <= to + 1.0e-6; b += step)
+    {
+        auto& seq = c.getSequence();
+        seq.removeControllersBetween (type, te::BeatPosition::fromBeats (b - 1.0e-6), te::BeatPosition::fromBeats (b + step - 1.0e-6), um);
+        if (! erase) seq.addControllerEvent (te::BeatPosition::fromBeats (b), type, yToCc (e.position.y), um);
+    }
+    lastCcBeat = beat;
 }

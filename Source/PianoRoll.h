@@ -1,5 +1,6 @@
 #pragma once
 #include "DawUI.h"
+#include "StepEditor.h"
 
 /** Note editor for the selected MIDI clip (bottom panel) */
 class PianoRoll : public juce::Component, private juce::Timer
@@ -17,7 +18,12 @@ public:
     bool keyPressed (const juce::KeyPress&) override;
     std::function<void()> onClose;
 private:
-    void timerCallback() override { repaint(); }
+    void timerCallback() override
+    {   // a step clip is edited in the step sequencer instead
+        const bool step = dynamic_cast<te::StepClip*> (vs.getSelectedClip()) != nullptr;
+        if (stepEditor.isVisible() != step) { stepEditor.setVisible (step); if (step) stepEditor.toFront (false); }
+        if (! step) repaint();
+    }
     te::MidiClip* clip();
     juce::Rectangle<int> gridArea() const { return { keysW, toolbarH, getWidth() - keysW, getHeight() - toolbarH - velH }; }
     juce::Rectangle<int> velArea() const { return { keysW, getHeight() - velH, getWidth() - keysW, velH }; }
@@ -34,6 +40,15 @@ private:
     enum class Mode { none, move, resize, create, velocity } mode = Mode::none;
     te::MidiNote* dragNote = nullptr; double grabBeat = 0, origStart = 0, origLen = 0; int grabNote = 0, origNote = 0;
     double lastLen = 0.25;
-    juce::ComboBox gridBox; juce::TextButton quantBtn, closeBtn, clearBtn; juce::Label title;
+    juce::ComboBox gridBox, laneBox; juce::TextButton quantBtn, closeBtn, clearBtn; juce::Label title;
+    // the bottom lane: velocity, or a controller (CC / pitch bend / aftertouch)
+    int laneType() const;                                    // -1 = velocity
+    static juce::String laneName (int type);
+    float ccToY (int value) const;
+    int yToCc (float y) const;
+    void drawControllerLane (juce::Graphics&, te::MidiClip&, juce::Colour);
+    void paintController (te::MidiClip&, const juce::MouseEvent&, bool erase);
+    double lastCcBeat = -1.0;
+    StepEditor stepEditor { vs };     // declared after vs
     te::EditItemID lastClip;
 };

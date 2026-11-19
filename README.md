@@ -72,6 +72,38 @@ First run: **Options > Audio / MIDI settings** (pick ASIO / WASAPI on Windows, C
   - **OUTPUT** columns route each track to the Master or to a bus.
   - **SENDS** columns add or remove sends to each bus (−6 dB to start); drag up or down on a send to change its level.
 
+**Stage 4 - full workflow**
+- **Clip launcher (Shift+Tab, or SESSION):** tracks across, scenes down.
+  - Click a clip's triangle to launch it, or a scene's triangle to launch the row. Clips start on the next bar by default; change this with the **Launch** menu, or per clip.
+  - Double-click an empty slot on an instrument track for a new MIDI clip. You can also drop audio or MIDI files on a slot, or right-click an arrangement clip and choose **Copy to the clip launcher**.
+  - Drag a clip to move it (Alt-drag copies it).
+  - Right-click a clip to set its **follow action** (next, previous, any, play again, stop, back to arrangement...) and after how many loops it happens.
+  - Right-click an empty slot and choose **Record into this slot**: the new clip starts looping when you stop recording.
+  - A launched clip takes its track over from the arrangement. **BACK TO ARRANGEMENT** hands it back.
+- **Comping:** turn on LOOP and record. Every pass becomes a take in one clip.
+  - Click **TK** on the track header to show the take lanes.
+  - Click a take to use it for the whole clip, or drag across part of a take to comp just that part (the clip is split with tiny crossfades).
+  - Right-click the clip > **Takes** to keep only the current take or put every take on its own track.
+- **Export (File > Export mixdown / Export stems, Ctrl+Shift+E):**
+  - Formats: WAV, AIFF, FLAC, OGG, or MP3 at 320 kbps (MP3 needs the free LAME encoder; put lame.exe next to the DAW).
+  - Choose 16 / 24 / 32-bit and 44.1-96 kHz.
+  - Normalise to a peak level, or to -14 LUFS (streaming) or -9 LUFS (club), with true peaks kept under -1 dBTP.
+  - Stems are one file per track, bus and folder, all starting at the same time.
+- **Bounce in place / Consolidate (right-click a track header):** works on the loop range, or the whole track.
+  - Bounce renders the track with its plug-ins to a new audio track and mutes the original.
+  - Consolidate joins clips into one.
+- **Folders:** Track > Add folder, or right-click a header > Folder.
+  - A folder is a bus that its tracks play through, so its fader and inserts work on the whole group.
+  - Collapse it with the arrow. Moving the folder moves its tracks too.
+- **Tempo and time-signature changes:** right-click the ruler. The bar lines follow the new signature.
+- **Markers:** press **M** or right-click the ruler. Double-click a marker to rename it. **Edit > Markers & tempo list** shows everything, with GO buttons.
+- **Piano roll controller lane:** the menu above the bottom lane switches it from velocity to mod wheel, expression, sustain, volume, pan, cutoff, resonance, pitch bend or aftertouch. Draw with the mouse; right-click erases.
+- **Step sequencer:** right-click an empty spot on an instrument track > **New step-sequencer clip**. Its rows are General MIDI drums, so it plays Vega Productions Drums directly. Choose 8-64 steps and 1/8-1/32 rate; Shift-click adds a soft hit.
+- **Other additions:**
+  - **Duplicate track.**
+  - **File > Open recent.**
+  - **Autosave** every 2 minutes. If the DAW didn't close normally, it offers to recover your work the next time it starts.
+
 **Using plug-ins**
 - **Load:** in the PLUGINS panel, double-click a plug-in or drag it onto a track or mixer strip. Its window opens right away. An instrument goes on the selected instrument track, or on a new one. An effect goes on the selected track.
 - **Reopen:** every track header has an **INST** button that opens its instrument and an **FX** button that lists every plug-in on the track; click one to open it. In the mixer, click the instrument name or an insert slot.
@@ -118,7 +150,7 @@ Feedback goes back to the controller: fader values, mute/solo/select/arm lights,
 
 ## Roadmap
 - **Stage 2:** ✅ HUI / FLkey 2 controller script. Next: automation lanes, MIDI-learn, Mackie Control (MCU), warp markers, track freeze.
-- **Stage 3:** Ableton Push / controller scripts, routing matrix view, comping, video.
+- **Stage 3:** ✅ routing matrix. **Stage 4:** ✅ clip launcher, comping, stems / formats export, bounce, folders, tempo map, CC lanes, step sequencer, autosave. Next: Ableton Push script, video.
 
 AAX is not supported: Avid only allows AAX plugins inside Pro Tools.
 

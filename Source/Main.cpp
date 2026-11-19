@@ -9,6 +9,9 @@
 #include "StemSeparator.h"
 #include "StemClient.h"
 #include "RoutingMatrix.h"
+#include "SessionView.h"
+#include "SongMap.h"
+#include "ExportDialog.h"
 
 //==============================================================================
 class TransportBar : public juce::Component, private juce::Timer
@@ -27,7 +30,8 @@ public:
         btn (learn, "LEARN", juce::Colour (0xffb183f2));
         learn.setTooltip ("MIDI learn: turn on, move a control on screen, then move a knob / fader on your controller. Turn off when done.");
         learn.onClick = [this] { auto& ls = vs.edit().engine.getMidiLearnState(); ls.setActive (! ls.isActive()); repaint(); };
-        btn (view, "MIXER"); btn (browse, "PLUGINS"); btn (addAudio, "+ AUDIO"); btn (addInst, "+ INSTRUMENT"); btn (addBus, "+ BUS");
+        btn (view, "MIXER"); btn (sessionBtn, "SESSION"); btn (browse, "PLUGINS"); btn (addAudio, "+ AUDIO"); btn (addInst, "+ INST"); btn (addBus, "+ BUS");
+        sessionBtn.setTooltip ("Clip launcher (Shift+Tab)"); addInst.setTooltip ("Add an instrument track");
         home.onClick = [this] { vs.edit().getTransport().setPosition (0s); };
         play.onClick = [this] { auto& t = vs.edit().getTransport(); if (t.isPlaying()) t.stop (false, false); else t.play (false); };
         stop.onClick = [this] { auto& t = vs.edit().getTransport(); if (t.isPlaying()) t.stop (false, false); else t.setPosition (0s); };
@@ -50,7 +54,7 @@ public:
         addAndMakeVisible (snap);
         startTimerHz (20);
     }
-    std::function<void()> onToggleView, onToggleBrowser;
+    std::function<void()> onToggleView, onToggleBrowser, onToggleSession;
     void setBrowserShown (bool b) { browse.setToggleState (b, juce::dontSendNotification); }
     bool barSnap = false;
     void paint (juce::Graphics& g) override
@@ -87,13 +91,18 @@ public:
         display = { x, y - 2, 260, h + 4 }; x += 270;
         tempo.setBounds (x, y, 110, h); x += 116; sig.setBounds (x, y, 70, h); x += 76; snap.setBounds (x, y, 112, h); x += 120;
         cpuArea = { x + 4, y, 60, h }; x += 74;
-        view.setBounds (getWidth() - 96, y, 88, h);
-        addBus.setBounds (getWidth() - 166, y, 66, h); addInst.setBounds (getWidth() - 280, y, 110, h); addAudio.setBounds (getWidth() - 362, y, 78, h);
-        browse.setBounds (getWidth() - 452, y, 82, h);
+        view.setBounds (getWidth() - 88, y, 80, h); sessionBtn.setBounds (getWidth() - 172, y, 80, h);
+        addBus.setBounds (getWidth() - 238, y, 62, h); addInst.setBounds (getWidth() - 312, y, 70, h); addAudio.setBounds (getWidth() - 386, y, 70, h);
+        browse.setBounds (getWidth() - 472, y, 82, h);
         browse.onClick = [this] { if (onToggleBrowser) onToggleBrowser(); };
         view.onClick = [this] { if (onToggleView) onToggleView(); };
+        sessionBtn.onClick = [this] { if (onToggleSession) onToggleSession(); };
     }
-    void setViewLabel (bool mixerShowing) { view.setButtonText (mixerShowing ? "ARRANGE" : "MIXER"); }
+    void setViewLabel (bool mixerShowing, bool sessionShowing = false)
+    {
+        view.setButtonText (mixerShowing ? "ARRANGE" : "MIXER"); sessionBtn.setButtonText (sessionShowing ? "ARRANGE" : "SESSION");
+        sessionBtn.setToggleState (sessionShowing, juce::dontSendNotification);
+    }
     void refreshFromEdit()
     {
         tempo.setValue (vs.session.getTempo(), juce::dontSendNotification);
@@ -117,7 +126,7 @@ private:
         repaint (display); repaint (cpuArea);
     }
     ViewState& vs;
-    juce::TextButton home, play, stop, rec, loop, click, view, addAudio, addInst, addBus, browse, autoWrite, learn;
+    juce::TextButton home, play, stop, rec, loop, click, view, sessionBtn, addAudio, addInst, addBus, browse, autoWrite, learn;
     juce::Slider tempo; juce::ComboBox sig, snap;
     juce::Rectangle<int> display, cpuArea;
 };
@@ -126,14 +135,18 @@ private:
 class MainComponent : public juce::Component, public juce::MenuBarModel, public juce::DragAndDropContainer, private juce::Timer
 {
 public:
-    MainComponent (te::Engine& e) : engine (e), session (e), vs (session), hub (e, session), transport (vs), arrange (vs), mixer (vs), pianoRoll (vs), browser (vs)
+    MainComponent (te::Engine& e) : engine (e), session (e), vs (session), hub (e, session), transport (vs), arrange (vs), mixer (vs), launcher (vs), pianoRoll (vs), browser (vs)
     {
         setLookAndFeel (&lnf);
         session.edit().getAutomationRecordManager().setWritingAutomation (false);
         menuBar.setModel (this);
         addAndMakeVisible (menuBar); addAndMakeVisible (transport); addAndMakeVisible (arrange);
-        addChildComponent (mixer); addChildComponent (pianoRoll); addChildComponent (divider);
+        addChildComponent (mixer); addChildComponent (launcher); addChildComponent (pianoRoll); addChildComponent (divider);
         transport.onToggleView = [this] { showMixer (! mixer.isVisible()); };
+        transport.onToggleSession = [this] { showSession (! launcher.isVisible()); };
+        vs.onShowSession = [this] { showSession (true); };
+        vs.onShowSongMap = [this] { showSongMap(); };
+        arrange.onRenderTrack = [this] (te::AudioTrack& t, bool bounce) { renderTrack (t, bounce); };
         addAndMakeVisible (browser); transport.setBrowserShown (true);
         transport.onToggleBrowser = [this] { showBrowser (! browser.isVisible()); };
         browser.onLoad = [this] (const PluginBrowser::Item& it, te::AudioTrack* t) { loadFromBrowser (it, t); };
@@ -156,13 +169,14 @@ public:
         juce::Timer::callAfterDelay (1200, [sp = juce::Component::SafePointer<MainComponent> (this)] { if (sp != nullptr) sp->autoDetectMcu(); });
         pianoRoll.onClose = [this] { showPianoRoll (false); };
         session.onBeforeEditChange = [this] { engine.getExternalControllerManager().detachFromEdit (&session.edit()); arrange.clearAll(); mixer.clearAll(); };
-        session.onEditChanged = [this] { arrange.editChanged(); mixer.rebuild(); hub.editChanged(); transport.refreshFromEdit(); setupInputs(); showPianoRoll (false); updateTitle(); };
+        session.onEditChanged = [this] { arrange.editChanged(); mixer.rebuild(); launcher.editChanged(); hub.editChanged(); transport.refreshFromEdit(); setupInputs(); showPianoRoll (false); updateTitle(); };
         divider.onDrag = [this] (int dy) { pianoH = juce::jlimit (160, getHeight() - 240, pianoH - dy); resized(); };
         setupInputs();
         transport.refreshFromEdit();
         setWantsKeyboardFocus (true);
         setSize (1500, 900);
         startTimerHz (2);
+        juce::Timer::callAfterDelay (900, [sp = juce::Component::SafePointer<MainComponent> (this)] { if (sp != nullptr) sp->offerRecovery(); });
     }
     ~MainComponent() override { engine.getExternalControllerManager().detachFromEdit (&session.edit()); menuBar.setModel (nullptr); mixer.clearAll(); setLookAndFeel (nullptr); }
 
@@ -192,7 +206,7 @@ public:
             divider.setBounds (r.removeFromBottom (6));
         }
         if (browser.isVisible()) browser.setBounds (r.removeFromLeft (browserW));
-        arrange.setBounds (r); mixer.setBounds (r);
+        arrange.setBounds (r); mixer.setBounds (r); launcher.setBounds (r);
     }
     bool keyPressed (const juce::KeyPress& k) override
     {
@@ -201,11 +215,15 @@ public:
         if (k == juce::KeyPress::spaceKey) { if (tr.isPlaying()) tr.stop (false, false); else tr.play (false); return true; }
         if (k.getKeyCode() == 'R' && k.getModifiers().isAnyModifierKeyDown() == false) { if (tr.isRecording()) tr.stop (true, false); else tr.record (false); return true; }
         if (k.getKeyCode() == 'L' && ! k.getModifiers().isAnyModifierKeyDown()) { tr.looping = ! tr.looping.get(); return true; }
+        if (k == juce::KeyPress (juce::KeyPress::tabKey, juce::ModifierKeys::shiftModifier, 0)) { showSession (! launcher.isVisible()); return true; }
         if (k == juce::KeyPress (juce::KeyPress::tabKey)) { showMixer (! mixer.isVisible()); return true; }
+        if (k.getKeyCode() == 'M' && ! k.getModifiers().isAnyModifierKeyDown()) { session.edit().getUndoManager().beginNewTransaction ("Add marker"); session.addMarker (tr.getPosition()); return true; }
         if (k.getKeyCode() == 'B' && ! k.getModifiers().isAnyModifierKeyDown()) { showBrowser (! browser.isVisible()); return true; }
         if (k == juce::KeyPress ('z', cmd, 0)) { session.edit().getUndoManager().undo(); return true; }
         if (k == juce::KeyPress ('z', cmd | juce::ModifierKeys::shiftModifier, 0) || k == juce::KeyPress ('y', cmd, 0)) { session.edit().getUndoManager().redo(); return true; }
         if (k == juce::KeyPress ('s', cmd, 0)) { save (false); return true; }
+        if (k == juce::KeyPress ('e', cmd | juce::ModifierKeys::shiftModifier, 0)) { showExport (false); return true; }
+        if (k == juce::KeyPress ('o', cmd, 0)) { open(); return true; }
         if (k == juce::KeyPress (juce::KeyPress::homeKey)) { tr.setPosition (0s); return true; }
         return false;
     }
@@ -217,20 +235,32 @@ public:
         juce::PopupMenu m;
         if (idx == 0)
         {
-            m.addItem (1, "New project"); m.addItem (2, "Open...      Ctrl+O"); m.addItem (3, "Save          Ctrl+S"); m.addItem (4, "Save as...");
-            m.addSeparator(); m.addItem (5, "Import audio / MIDI..."); m.addItem (7, "Separate stems from a song (AI)..."); m.addItem (6, "Export mixdown (WAV)...");
+            m.addItem (1, "New project"); m.addItem (2, "Open...      Ctrl+O");
+            juce::PopupMenu recent; auto files = recentFiles();
+            for (int i = 0; i < files.size(); ++i) recent.addItem (700 + i, files[i].getFileNameWithoutExtension() + "   (" + files[i].getParentDirectory().getFileName() + ")");
+            if (files.isEmpty()) recent.addItem (-1, "No recent projects", false);
+            m.addSubMenu ("Open recent", recent);
+            m.addItem (3, "Save          Ctrl+S"); m.addItem (4, "Save as...");
+            m.addSeparator(); m.addItem (5, "Import audio / MIDI..."); m.addItem (7, "Separate stems from a song (AI)...");
+            m.addSeparator(); m.addItem (6, "Export mixdown...   Ctrl+Shift+E"); m.addItem (8, "Export stems...");
             m.addSeparator(); m.addItem (9, "Quit");
         }
         else if (idx == 1)
         {
             m.addItem (20, "Undo   Ctrl+Z", session.edit().getUndoManager().canUndo()); m.addItem (21, "Redo   Ctrl+Shift+Z", session.edit().getUndoManager().canRedo());
             m.addSeparator(); m.addItem (22, "Split clip at playhead   Ctrl+E"); m.addItem (23, "Duplicate clip   Ctrl+D"); m.addItem (24, "Delete clip   Del");
+            m.addSeparator(); m.addItem (25, "Add marker at playhead   M"); m.addItem (26, "Markers & tempo list...");
         }
         else if (idx == 2)
         {
-            m.addItem (30, "Add audio track"); m.addItem (31, "Add instrument track"); m.addItem (32, "Add bus");
-            m.addSeparator(); m.addItem (33, "Delete selected track", vs.getSelectedTrack() != nullptr);
-            m.addItem (34, "Show mixer   Tab", true, mixer.isVisible()); m.addItem (35, "Show piano roll", true, pianoRoll.isVisible());
+            m.addItem (30, "Add audio track"); m.addItem (31, "Add instrument track"); m.addItem (32, "Add bus"); m.addItem (29, "Add folder");
+            m.addSeparator(); m.addItem (28, "Duplicate selected track", vs.getSelectedTrack() != nullptr && ! DawSession::isFolder (*vs.getSelectedTrack()));
+            m.addItem (33, "Delete selected track", vs.getSelectedTrack() != nullptr);
+            m.addItem (27, "Bounce selected track in place", vs.getSelectedTrack() != nullptr && DawSession::kindOf (*vs.getSelectedTrack()) != DawSession::TrackKind::bus);
+            m.addItem (19, "Consolidate clips on selected track", vs.getSelectedTrack() != nullptr && DawSession::kindOf (*vs.getSelectedTrack()) != DawSession::TrackKind::bus);
+            m.addSeparator();
+            m.addItem (34, "Show mixer   Tab", true, mixer.isVisible()); m.addItem (48, "Show clip launcher   Shift+Tab", true, launcher.isVisible());
+            m.addItem (35, "Show piano roll", true, pianoRoll.isVisible());
             m.addItem (36, "Show plug-in browser   B", true, browser.isVisible());
             m.addItem (39, "Routing matrix...");
             m.addSeparator();
@@ -262,9 +292,23 @@ public:
             case 3: save (false); break;
             case 4: save (true); break;
             case 5: importFiles(); break;
-            case 6: exportMix(); break;
+            case 6: showExport (false); break;
+            case 8: showExport (true); break;
+            case 25: session.edit().getUndoManager().beginNewTransaction ("Add marker"); session.addMarker (session.edit().getTransport().getPosition()); break;
+            case 26: showSongMap(); break;
+            case 29: { session.edit().getUndoManager().beginNewTransaction ("Add folder"); vs.selectTrack (session.addFolder()); arrange.rebuildHeaders(); break; }
+            case 28: if (auto* t = vs.getSelectedTrack()) { if (auto* d = session.duplicateTrack (*t)) vs.selectTrack (d); arrange.rebuildHeaders(); mixer.rebuild(); } break;
+            case 27: if (auto* t = vs.getSelectedTrack()) renderTrack (*t, true); break;
+            case 19: if (auto* t = vs.getSelectedTrack()) renderTrack (*t, false); break;
+            case 48: showSession (! launcher.isVisible()); break;
             case 7: separateFile(); break;
             case 9: juce::JUCEApplication::getInstance()->systemRequestedQuit(); break;
+            case 700: case 701: case 702: case 703: case 704: case 705: case 706: case 707: case 708: case 709:
+            {
+                const auto f = recentFiles()[id - 700];
+                confirmDiscard ([this, f] { if (! session.openProject (f)) juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Open", "Couldn't open " + f.getFullPathName()); else addRecent (f); });
+                break;
+            }
             case 20: session.edit().getUndoManager().undo(); break;
             case 21: session.edit().getUndoManager().redo(); break;
             case 22: arrange.splitSelectedAtPlayhead(); break;
@@ -303,7 +347,7 @@ public:
             case 42: session.edit().clickTrackEnabled = ! session.edit().clickTrackEnabled.get(); break;
             case 43: vs.followPlayhead = ! vs.followPlayhead; break;
             case 50: juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::NoIcon, "Shortcuts",
-                        "Space  play / stop\nR  record\nL  loop on/off\nHome  go to start\nTab  arrange / mixer\nB  plug-in browser\nCtrl+Z / Ctrl+Shift+Z  undo / redo\nCtrl+S  save\nCtrl+E  split clip at playhead\nCtrl+D  duplicate clip\nDel  delete clip\n\n"
+                        "Space  play / stop\nR  record (with LOOP on, every pass becomes a take)\nL  loop on/off\nM  add a marker\nHome  go to start\nTab  arrange / mixer\nShift+Tab  clip launcher\nB  plug-in browser\nCtrl+Shift+E  export\nCtrl+Z / Ctrl+Shift+Z  undo / redo\nCtrl+S  save\nCtrl+E  split clip at playhead\nCtrl+D  duplicate clip\nDel  delete clip\n\n"
                         "Arrange: drag clips to move, drag edges to trim, drag the top corners of audio clips for fades, Alt-drag to copy, Shift for no snap.\n"
                         "Ctrl+wheel zoom, Shift+wheel scroll. Double-click an instrument track to create a MIDI clip.\n"
                         "Ruler: click to move the playhead, drag the top strip (or Shift-drag) to set the loop.\n"
@@ -327,13 +371,119 @@ public:
     }
 
 private:
-    void timerCallback() override { updateTitle(); }
+    void timerCallback() override
+    {
+        updateTitle();
+        if (++autosaveTicks >= 2 * 120) { autosaveTicks = 0; autosave(); }      // every 2 minutes
+    }
+    int autosaveTicks = 0;
     void updateTitle()
     {
         const auto f = session.getProjectFile();
         if (onTitle) onTitle ((f == juce::File() ? juce::String ("Untitled") : f.getFileNameWithoutExtension()) + (session.hasUnsavedChanges() ? " *" : "") + "  -  Vega Productions DAW");
     }
-    void showMixer (bool m) { mixer.setVisible (m); arrange.setVisible (! m); transport.setViewLabel (m); if (m) mixer.rebuild(); }
+    void showMixer (bool m) { mixer.setVisible (m); launcher.setVisible (false); arrange.setVisible (! m); transport.setViewLabel (m, false); if (m) mixer.rebuild(); }
+    void showSession (bool on) { launcher.setVisible (on); mixer.setVisible (false); arrange.setVisible (! on); transport.setViewLabel (false, on); if (on) launcher.grabKeyboardFocus(); }
+
+    // ---------------------------------------------------------------- export / bounce / markers
+    void showExport (bool stems)
+    {
+        juce::DialogWindow::LaunchOptions o;
+        o.dialogTitle = stems ? "Export stems" : "Export";
+        o.content.setOwned (new ExportDialog (session, stems));
+        o.dialogBackgroundColour = juce::Colour (0xff1b1b1d); o.resizable = false; o.useNativeTitleBar = true;
+        o.launchAsync();
+    }
+    void showSongMap()
+    {
+        juce::DialogWindow::LaunchOptions o;
+        o.dialogTitle = "Markers & tempo";
+        o.content.setOwned (new SongMap (vs));
+        o.dialogBackgroundColour = juce::Colour (0xff1b1b1d); o.resizable = true; o.useNativeTitleBar = true;
+        o.launchAsync();
+    }
+    /** Bounce in place / consolidate over the loop range (when looping) or everything on the track */
+    void renderTrack (te::AudioTrack& t, bool bounce)
+    {
+        auto& tr = session.edit().getTransport();
+        te::TimeRange range;
+        if (tr.looping && tr.getLoopRange().getLength() > 0s) range = tr.getLoopRange();
+        else
+        {
+            bool any = false;
+            for (auto* c : t.getClips()) { range = any ? range.getUnionWith (c->getPosition().time) : c->getPosition().time; any = true; }
+            if (! any) { juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, bounce ? "Bounce" : "Consolidate", "There are no clips on this track."); return; }
+        }
+        if (bounce)
+        {
+            if (auto* nt = session.bounceToNewTrack (t, range)) vs.selectTrack (nt);
+            else juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Bounce", "The bounce didn't work.");
+        }
+        else if (auto* c = session.consolidate (t, range)) vs.selectClip (c);
+        arrange.rebuildHeaders(); mixer.rebuild();
+    }
+
+    // ---------------------------------------------------------------- recent files + autosave
+    juce::File prefsFile (const juce::String& name) { return engine.getPropertyStorage().getAppPrefsFolder().getChildFile (name); }
+    juce::Array<juce::File> recentFiles()
+    {
+        juce::Array<juce::File> r;
+        for (auto& l : juce::StringArray::fromLines (prefsFile ("VegaRecent.txt").loadFileAsString()))
+            if (l.isNotEmpty() && juce::File (l).existsAsFile() && r.size() < 10) r.add (juce::File (l));
+        return r;
+    }
+    void addRecent (const juce::File& f)
+    {
+        auto list = recentFiles(); list.removeFirstMatchingValue (f); list.insert (0, f);
+        juce::StringArray lines; for (auto& x : list) lines.add (x.getFullPathName());
+        prefsFile ("VegaRecent.txt").replaceWithText (lines.joinIntoString ("\n"));
+    }
+    juce::File autosaveFile()
+    {
+        const auto pf = session.getProjectFile();
+        if (pf != juce::File()) return pf.getSiblingFile (pf.getFileNameWithoutExtension() + " (autosave).vegaproj");
+        auto d = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Vega Productions").getChildFile ("Autosave");
+        d.createDirectory();
+        return d.getChildFile ("Untitled (autosave).vegaproj");
+    }
+    void autosave()
+    {
+        if (! session.hasUnsavedChanges() || session.edit().getTransport().isRecording()) return;
+        const auto f = autosaveFile();
+        te::EditFileOperations ops (session.edit());
+        if (ops.writeToFile (f, false))
+            prefsFile ("VegaAutosave.txt").replaceWithText (f.getFullPathName() + "\n" + session.getProjectFile().getFullPathName());
+    }
+public:
+    /** Saved (or quit cleanly): the autosave isn't needed any more */
+    void clearAutosave()
+    {
+        auto lines = juce::StringArray::fromLines (prefsFile ("VegaAutosave.txt").loadFileAsString());
+        if (lines.size() > 0 && lines[0].isNotEmpty()) juce::File (lines[0]).deleteFile();
+        prefsFile ("VegaAutosave.txt").deleteFile();
+    }
+private:
+    void offerRecovery()
+    {
+        auto lines = juce::StringArray::fromLines (prefsFile ("VegaAutosave.txt").loadFileAsString());
+        if (lines.size() < 1 || ! juce::File (lines[0]).existsAsFile()) return;
+        const juce::File autosaved (lines[0]), original (lines[1]);
+        auto opts = juce::MessageBoxOptions().withTitle ("Recover your work?").withIconType (juce::MessageBoxIconType::QuestionIcon)
+            .withMessage ("Vega Productions DAW didn't close normally last time. There's an autosave of "
+                          + (original != juce::File() ? "\"" + original.getFileNameWithoutExtension() + "\"" : juce::String ("an unsaved project"))
+                          + " from " + juce::File (lines[0]).getLastModificationTime().toString (true, true) + ".")
+            .withButton ("Recover", 1).withButton ("Discard it", 0);
+        juce::AlertWindow::showAsync (opts, [this, autosaved, original] (int r)
+        {
+            if (r != 1) { clearAutosave(); return; }
+            if (session.openProject (autosaved))
+            {
+                if (original != juce::File()) session.setProjectFile (original);
+                session.edit().markAsChanged();
+                updateTitle();
+            }
+        });
+    }
 
     // ---------------------------------------------------------------- AI stem separation
     void separateFile()
@@ -595,20 +745,21 @@ private:
             {
                 if (fc.getResult().existsAsFile() && ! session.openProject (fc.getResult()))
                     juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Open", "Couldn't open " + fc.getResult().getFileName());
+                else if (fc.getResult().existsAsFile()) addRecent (fc.getResult());
             });
         });
     }
 public:
-    void openFile (const juce::File& f) { if (f.existsAsFile()) session.openProject (f); }
+    void openFile (const juce::File& f) { if (f.existsAsFile() && session.openProject (f)) addRecent (f); }
     void save (bool as, std::function<void()> then = nullptr)
     {
-        if (! as && session.saveProject()) { if (then) then(); return; }
+        if (! as && session.saveProject()) { addRecent (session.getProjectFile()); clearAutosave(); if (then) then(); return; }
         juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Vega Productions").createDirectory();
         chooser = std::make_unique<juce::FileChooser> ("Save project", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Vega Productions").getChildFile ("My Song.vegaproj"), "*.vegaproj");
         chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting, [this, then] (const juce::FileChooser& fc)
         {
             if (fc.getResult() == juce::File()) return;
-            if (session.saveProjectAs (fc.getResult())) { if (then) then(); }
+            if (session.saveProjectAs (fc.getResult())) { addRecent (session.getProjectFile()); clearAutosave(); if (then) then(); }
             else juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Save", "Couldn't save the project.");
         });
     }
@@ -620,19 +771,6 @@ private:
         {
             juce::StringArray paths; for (auto& f : fc.getResults()) paths.add (f.getFullPathName());
             if (! paths.isEmpty()) arrange.filesDropped (paths, ArrangeView::headerW + 2, ArrangeView::rulerH + arrange.totalTracksHeight() + 10);
-        });
-    }
-    void exportMix()
-    {
-        chooser = std::make_unique<juce::FileChooser> ("Export mixdown", juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile ((session.getProjectFile() == juce::File() ? juce::String ("Mixdown") : session.getProjectFile().getFileNameWithoutExtension()) + ".wav"), "*.wav");
-        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting, [this] (const juce::FileChooser& fc)
-        {
-            if (fc.getResult() == juce::File()) return;
-            auto& tr = session.edit().getTransport();
-            std::optional<te::TimeRange> range; if (tr.looping) range = tr.getLoopRange();
-            const bool ok = session.exportWav (fc.getResult(), range);
-            juce::AlertWindow::showMessageBoxAsync (ok ? juce::MessageBoxIconType::InfoIcon : juce::MessageBoxIconType::WarningIcon, "Export",
-                ok ? "Exported " + fc.getResult().withFileExtension ("wav").getFileName() + (range ? "\n(loop range only)" : "") : juce::String ("Nothing to export - add some clips first."));
         });
     }
     void showAudioSettings()
@@ -672,7 +810,7 @@ private:
     VegaLookAndFeel lnf;
     DawSession session; te::SelectionManager selection { engine }; ViewState vs; ControllerHub hub;
     juce::MenuBarComponent menuBar;
-    TransportBar transport; ArrangeView arrange; MixerView mixer; PianoRoll pianoRoll; PluginBrowser browser; Divider divider;
+    TransportBar transport; ArrangeView arrange; MixerView mixer; SessionView launcher; PianoRoll pianoRoll; PluginBrowser browser; Divider divider;
     int browserW = 250;
     int pianoH = 320;
     std::unique_ptr<juce::FileChooser> chooser;
@@ -698,7 +836,7 @@ public:
     void systemRequestedQuit() override
     {
         if (window == nullptr) { quit(); return; }
-        window->main->confirmDiscard ([] { juce::JUCEApplication::getInstance()->quit(); });
+        window->main->confirmDiscard ([this] { if (window) window->main->clearAutosave(); juce::JUCEApplication::getInstance()->quit(); });
     }
     void anotherInstanceStarted (const juce::String& cl) override
     {

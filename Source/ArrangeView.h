@@ -40,10 +40,14 @@ private:
     bool needsRebuild = false, needsRepaint = false;
     friend class Lanes; friend class Ruler;
 public:
-    static constexpr int autoLaneH = 76;
+    static constexpr int autoLaneH = 76, takeLaneH = 34;
     int clipHeight (te::Track& t) const { return (int) t.state.getProperty ("vegaHeight", 84); }
     int laneHeight (te::Track& t) const { return (bool) t.state.getProperty ("vegaAutoShown", false) ? autoLaneH : 0; }
-    int trackHeight (te::Track& t) const { return clipHeight (t) + laneHeight (t); }   // clips + automation lane
+    static int maxTakes (te::Track&);                                                   // most takes on any clip of the track
+    int takesHeight (te::Track& t) const { return (bool) t.state.getProperty ("vegaTakesShown", false) ? maxTakes (t) * takeLaneH : 0; }
+    int trackHeight (te::Track& t) const { return clipHeight (t) + takesHeight (t) + laneHeight (t); }   // clips + take lanes + automation lane
+    juce::Array<te::AudioTrack*> visibleTracks() const;                                 // tracks not hidden in a collapsed folder
+    std::function<void (te::AudioTrack&, bool bounce)> onRenderTrack;                   // bounce in place / consolidate (needs the loop range UI)
     int totalTracksHeight();
     te::AudioTrack* trackAtY (int yInLanes, int* rowTop = nullptr);
     int trackTop (te::AudioTrack&);

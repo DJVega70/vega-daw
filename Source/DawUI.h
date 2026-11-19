@@ -11,7 +11,7 @@ struct ViewState
     int scrollY = 0, snapDiv = 4;                     // grid divisions per beat (0 = off)
     te::EditItemID selectedClip, selectedTrack;
     bool followPlayhead = true;
-    std::function<void()> onSelectionChanged, onOpenPianoRoll;
+    std::function<void()> onSelectionChanged, onOpenPianoRoll, onShowSession, onShowSongMap;
     std::function<bool (const juce::var& dragDescription, te::AudioTrack* target)> onPluginDropped;
     std::function<void (te::WaveAudioClip*)> onSeparateClip;                                          // AI stem separation of an audio clip   // plug-in dragged from the browser
 
@@ -22,11 +22,19 @@ struct ViewState
     float beatToX (double beat, int x0) const { return (float) (x0 + (beat - scrollBeats) * pixelsPerBeat); }
     double xToBeat (float x, int x0) const { return scrollBeats + (x - x0) / pixelsPerBeat; }
     double snapBeat (double b, bool bypass = false) const { return (snapDiv <= 0 || bypass) ? b : std::round (b * snapDiv) / snapDiv; }
+    /** Bar lines follow time-signature changes: is this (whole) beat the first beat of a bar? */
+    bool isBarStart (double beat) { return tempo().toBarsAndBeats (beatsToTime (beat + 1.0e-4)).beats.inBeats() < 2.0e-4 + 1.0e-6; }
+    int barNumber (double beat) { return tempo().toBarsAndBeats (beatsToTime (beat + 1.0e-4)).bars + 1; }
+    int beatsPerBarAt (double beat) { return tempo().getTimeSigAt (beatsToTime (beat)).numerator.get(); }
 
     te::Clip* getSelectedClip()
     {
         if (! selectedClip.isValid()) return nullptr;
-        for (auto* t : te::getAudioTracks (edit())) for (auto* c : t->getClips()) if (c->itemID == selectedClip) return c;
+        for (auto* t : te::getAudioTracks (edit()))
+        {
+            for (auto* c : t->getClips()) if (c->itemID == selectedClip) return c;
+            for (auto* s : t->getClipSlotList().getClipSlots()) if (auto* c = s != nullptr ? s->getClip() : nullptr; c != nullptr && c->itemID == selectedClip) return c;
+        }
         return nullptr;
     }
     te::AudioTrack* getSelectedTrack()
@@ -38,6 +46,7 @@ struct ViewState
     {
         selectedClip = c != nullptr ? c->itemID : te::EditItemID();
         if (c != nullptr) if (auto* t = dynamic_cast<te::AudioTrack*> (c->getTrack())) selectedTrack = t->itemID;
+        if (c != nullptr) if (auto* sl = c->getClipSlot()) if (auto* t = dynamic_cast<te::AudioTrack*> (&sl->track)) selectedTrack = t->itemID;
         if (onSelectionChanged) onSelectionChanged();
     }
     void selectTrack (te::AudioTrack* t) { selectedTrack = t != nullptr ? t->itemID : te::EditItemID(); if (onSelectionChanged) onSelectionChanged(); }
