@@ -8,6 +8,7 @@ A digital audio workstation for the Vega Productions suite — built on the open
 ## Download
 - **Windows installer (recommended):** https://github.com/DJVega70/vega-daw/releases/latest/download/VegaProductions-DAW-Setup.exe — run it to install to Program Files with Start menu / desktop shortcuts, `.vegaproj` file opening, and an uninstaller in Settings > Apps. Run a newer Setup to update.
 - **Windows portable:** https://github.com/DJVega70/vega-daw/releases/latest/download/VegaProductions-DAW-Windows.zip — unzip anywhere and run `Vega Productions DAW.exe`. Keep `VegaStemHelper.exe` and `VegaStemHelperAVX2.exe` in the same folder: they run the AI stem separation.
+- **Android phone - Vega Sketch:** https://github.com/DJVega70/vega-daw/releases/latest/download/VegaSketch-Android.apk (see *Vega Sketch* below)
 - **Mac:** https://github.com/DJVega70/vega-daw/releases/latest/download/VegaProductions-DAW-macOS.zip — drag the app to Applications, then run once in Terminal: `xattr -cr "/Applications/Vega Productions DAW.app"`
 
 First run: **Options > Audio / MIDI settings** (pick ASIO / WASAPI on Windows, CoreAudio on Mac, and enable your MIDI keyboard), then open the **PLUGINS** panel (button at the top right, or press **B**). The DAW scans your standard VST3 folder (and AU on Mac) by itself on first launch and picks up newly installed plug-ins every time it starts. Use **FOLDERS** if you keep .vst3 files somewhere else.
@@ -148,6 +149,44 @@ The DAW has a built-in **HUI controller script**, the protocol the FLkey 2 uses 
 | Track/cursor buttons | Previous / next track, playhead by a beat |
 
 Feedback goes back to the controller: fader values, mute/solo/select/arm lights, encoder positions, 4-letter track names and transport lights.
+
+## Vega Sketch (Android)
+A companion app for getting ideas down on your phone, then finishing them in the DAW.
+
+**Install:**
+1. On the phone, open the APK link above (or download `VegaSketch-Android.apk` from the latest release) and tap it.
+2. The first time, Android asks you to allow installs from your browser or Files app. Allow it.
+3. Newer builds install over the top and keep your sketches.
+
+**On the phone:**
+- **Song**
+  - The clip launcher: tracks across, 8 scenes down.
+  - Tap a clip to launch it on the next bar; tap a scene's ▶ to launch the row.
+  - Double-tap a clip to edit it; long-press for its length, duplicate, delete and rename.
+  - Add Drums, Keys or Audio tracks (up to 8).
+- **Beats**
+  - 16 drum pads in 5 synthesized kits: House Classic, Vega 808, Vega 909, Deep Soul and Lo-Fi Dusty.
+  - A step sequencer for the selected pad, plus a grid of every sound that you can tap too.
+- **Keys**
+  - 8 synth sounds: Soul Keys (electric piano), Warm Pad, Deep Bass, House Organ, Pluck, Strings, Bright Lead and Garage Bass.
+  - A two-octave multitouch keyboard, with the notes of the key highlighted.
+  - 8 chord pads that play the chords of the key you pick, with optional 9ths and a bass note.
+- **Record**
+  - Records the phone's mic into a slot: a 1-bar count-in, then exactly the bars you pick.
+  - Use headphones so the beat doesn't get into the take.
+- **The ● button at the top** records into the selected slot.
+  - Drums and keys loop and add each pass (overdub), quantised to 1/16 if you leave that on.
+  - Pick the length with **Bars**.
+  - The metronome, tempo (with tap tempo), undo and sketch files are in the top bar and the ⋮ menu.
+
+**Getting a sketch onto the PC:**
+1. ⋮ > **Send to desktop**. Use Quick Share to your PC, Google Drive or email. Or use **Save to Downloads** and copy it over USB.
+2. In the DAW, choose **File > Import phone sketch** and pick the `.vegasketch` file.
+3. Choose the sounds:
+   - **Desktop instruments**: drums and keys come in as MIDI on Vega Productions Drums / Multisynth if they're installed (4OSC if not).
+   - **Phone sounds**: drums and keys come in as audio that sounds exactly like the phone.
+   - **Both**: you get both, with the phone audio muted underneath.
+4. Clips land in the clip launcher, with the same scenes, names, colours and tempo. The scenes are also laid out in the arrangement, with a marker for each one.
 
 ## Controllers: Akai APC Key 25 mk2
 The DAW has a built-in script for the APC Key 25 mk2. It is laid out like Ableton's script, and the pads drive the clip launcher.

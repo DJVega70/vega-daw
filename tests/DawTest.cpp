@@ -744,6 +744,60 @@ int main()
         note (0); apc.updateFeedback(); note (0, false);
         check (apc.drumPads && ! sent.empty() && ! as.edit().getTransport().isRecording(), "APC: Shift + Record turns the pads into drum pads (no recording started)");
     }
+    {   // ---- phone sketch import (Vega Sketch for Android)
+        auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_sketch_src");
+        tmp.deleteRecursively(); tmp.getChildFile ("audio").createDirectory(); tmp.getChildFile ("renders").createDirectory();
+        writeTone ("vega_vox.wav", 330.0, 60.0 / 124.0 * 8.0).moveFileTo (tmp.getChildFile ("audio/vox.wav"));
+        writeTone ("vega_r0.wav", 60.0, 60.0 / 124.0 * 4.0).moveFileTo (tmp.getChildFile ("renders/t0s0.wav"));
+        writeTone ("vega_r1.wav", 220.0, 60.0 / 124.0 * 8.0).moveFileTo (tmp.getChildFile ("renders/t1s0.wav"));
+        tmp.getChildFile ("sketch.json").replaceWithText (R"({
+          "format": "vega-sketch", "version": 1, "name": "Sunday Groove", "bpm": 124.0, "beatsPerBar": 4,
+          "scenes": ["Intro", "Drop", "Scene 3", "Scene 4", "Scene 5", "Scene 6", "Scene 7", "Scene 8"],
+          "tracks": [
+            { "name": "Drums", "type": "drums", "sound": 0, "volume": 0.85, "pan": 0, "colour": "#FFA25E",
+              "clips": [ { "scene": 0, "name": "Beat 1", "bars": 1, "lengthBeats": 4.0, "notes": [[36,0,0.25,110],[39,1,0.25,100],[36,2,0.25,110],[39,3,0.25,100]], "render": "renders/t0s0.wav" },
+                         { "scene": 1, "name": "Beat 2", "bars": 1, "lengthBeats": 4.0, "notes": [[36,0,0.25,110],[42,0.5,0.25,90]] } ] },
+            { "name": "Keys", "type": "keys", "sound": 0, "volume": 0.7, "pan": -0.2, "colour": "#6FB7FF",
+              "clips": [ { "scene": 0, "name": "Chords", "bars": 2, "lengthBeats": 8.0, "notes": [[57,0,3.5,96],[60,0,3.5,96],[64,0,3.5,96],[55,4,3.5,96]], "render": "renders/t1s0.wav" } ] },
+            { "name": "Vocals", "type": "audio", "sound": 0, "volume": 0.9, "pan": 0, "colour": "#E8708A",
+              "clips": [ { "scene": 1, "name": "Take 1", "bars": 2, "lengthBeats": 8.0, "notes": [], "audio": "audio/vox.wav" } ] } ] })");
+        auto zipFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("Sunday Groove.vegasketch");
+        {
+            juce::ZipFile::Builder b;
+            for (auto& f : tmp.findChildFiles (juce::File::findFiles, true)) b.addFile (f, 9, f.getRelativePathFrom (tmp).replaceCharacter ('\\', '/'));
+            zipFile.deleteFile(); juce::FileOutputStream os (zipFile); b.writeToStream (os, nullptr);
+        }
+        DawSession ps (engine);
+        for (auto* t : ps.getTracks()) ps.deleteTrack (*t);
+        DawSession::SketchImport opt; opt.sounds = DawSession::SketchImport::Sounds::both;
+        auto r = ps.importSketch (zipFile, opt);
+        check (r.ok && r.name == "Sunday Groove", "import phone sketch: " + r.message);
+        check (std::abs (ps.edit().tempoSequence.getTempo (0)->getBpm() - 124.0) < 0.01, "the sketch's tempo (124 BPM)");
+        auto tracks = ps.getTracks();
+        // both: drums -> (phone) audio + MIDI, keys -> (phone) audio + MIDI, vocals -> audio  = 5 tracks
+        check (tracks.size() == 5, "tracks for both the phone audio and the desktop instruments (" + juce::String (tracks.size()) + ")");
+        te::AudioTrack* drumsMidi = nullptr; te::AudioTrack* vox = nullptr; te::AudioTrack* drumsPrint = nullptr;
+        for (auto* t : tracks) { if (t->getName() == "Drums" && DawSession::kindOf (*t) == DawSession::TrackKind::midi) drumsMidi = t; if (t->getName() == "Vocals") vox = t; if (t->getName() == "Drums (phone)") drumsPrint = t; }
+        auto* beat = drumsMidi != nullptr ? dynamic_cast<te::MidiClip*> (DawSession::slotClip (*drumsMidi, 0)) : nullptr;
+        check (beat != nullptr && beat->getSequence().getNumNotes() == 4 && beat->getName() == "Beat 1", "drum clip in scene 1 with its 4 hits");
+        check (vox != nullptr && dynamic_cast<te::WaveAudioClip*> (DawSession::slotClip (*vox, 1)) != nullptr, "the vocal take in scene 2");
+        check (drumsPrint != nullptr && drumsPrint->isMuted (false), "phone audio of the drums imported, muted (desktop instruments play)");
+        auto* sc0 = ps.edit().getSceneList().getScenes()[0];
+        check (sc0 != nullptr && sc0->name.get() == "Intro", "scene names come across");
+        // arrangement: Intro (2 bars, the longest clip) then Drop (2 bars, the vocal) with markers
+        check (ps.edit().getMarkerManager().getMarkers().size() == 2, "a marker per scene in the arrangement");
+        if (drumsMidi != nullptr)
+        {
+            auto arr = drumsMidi->getClips();
+            check (arr.size() == 2 && std::abs (ps.edit().tempoSequence.toBeats (arr[1]->getPosition().getStart()).inBeats() - 8.0) < 0.01
+                   && std::abs (ps.edit().tempoSequence.toBeats (arr[0]->getPosition().getEnd()).inBeats() - 8.0) < 0.01,
+                   "arrangement: the 1-bar beat loops to fill the 2-bar Intro, the Drop starts at bar 3");
+        }
+        auto o = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_sketch_mix.wav");
+        ps.exportWav (o);
+        check (peakOf (o, engine) > 0.05f, "the imported song plays (mixdown isn't silent)");
+        o.deleteFile(); zipFile.deleteFile(); tmp.deleteRecursively();
+    }
     out.deleteFile(); proj.deleteFile();
     std::cout << (fails == 0 ? "ALL PASSED" : "FAILURES: " + std::to_string (fails)) << "\n";
     return fails == 0 ? 0 : 1;

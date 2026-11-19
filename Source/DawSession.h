@@ -146,6 +146,19 @@ public:
     static void keepCurrentTakeOnly (te::WaveAudioClip&);
     juce::Array<te::AudioTrack*> unpackTakes (te::WaveAudioClip&);          // each take on its own new track
 
+    // ---- phone sketches (Vega Sketch for Android): a .vegasketch zip with sketch.json, audio/ and renders/
+    struct SketchImport
+    {
+        enum class Sounds { desktop, phone, both };
+        Sounds sounds = Sounds::desktop;     // desktop instruments (MIDI) / the phone's own audio prints / both (prints muted)
+        bool toArrangement = true;           // also lay the scenes out one after another in the arrangement
+        bool adoptTempo = true;
+    };
+    struct SketchResult { bool ok = false; juce::String message, name; int tracks = 0, clips = 0; };
+    SketchResult importSketch (const juce::File& sketchFile, const SketchImport&);
+    /** A plug-in the scanner has found, by (part of) its name: e.g. "Vega Productions Drums" */
+    const juce::PluginDescription* findPlugin (const juce::String& nameContains) const;
+
     // ---- clip launcher (session view)
     int numScenes() const;
     void ensureScenes (int);                                                // also gives every track that many slots

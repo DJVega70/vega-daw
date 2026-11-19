@@ -249,7 +249,7 @@ public:
             if (files.isEmpty()) recent.addItem (-1, "No recent projects", false);
             m.addSubMenu ("Open recent", recent);
             m.addItem (3, "Save          Ctrl+S"); m.addItem (4, "Save as...");
-            m.addSeparator(); m.addItem (5, "Import audio / MIDI..."); m.addItem (7, "Separate stems from a song (AI)...");
+            m.addSeparator(); m.addItem (5, "Import audio / MIDI..."); m.addItem (10, "Import phone sketch (Vega Sketch)..."); m.addItem (7, "Separate stems from a song (AI)...");
             m.addSeparator(); m.addItem (6, "Export mixdown...   Ctrl+Shift+E"); m.addItem (8, "Export stems...");
             m.addSeparator(); m.addItem (9, "Quit");
         }
@@ -302,6 +302,7 @@ public:
             case 4: save (true); break;
             case 5: importFiles(); break;
             case 6: showExport (false); break;
+            case 10: importPhoneSketch(); break;
             case 8: showExport (true); break;
             case 25: session.edit().getUndoManager().beginNewTransaction ("Add marker"); session.addMarker (session.edit().getTransport().getPosition()); break;
             case 26: showSongMap(); break;
@@ -410,6 +411,46 @@ private:
         o.dialogBackgroundColour = juce::Colour (0xff1b1b1d); o.resizable = false; o.useNativeTitleBar = true;
         o.launchAsync();
     }
+    /** File > Import phone sketch: a .vegasketch sent from Vega Sketch on Android (Quick Share, Google Drive, USB) */
+    void importPhoneSketch()
+    {
+        auto start = juce::File::getSpecialLocation (juce::File::userHomeDirectory).getChildFile ("Downloads");
+        chooser = std::make_unique<juce::FileChooser> ("Import a phone sketch", start.isDirectory() ? start : juce::File(), "*.vegasketch;*.zip");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc)
+        {
+            const auto f = fc.getResult();
+            if (! f.existsAsFile()) return;
+            auto* w = new juce::AlertWindow ("Import phone sketch", f.getFileNameWithoutExtension()
+                + "\n\nTracks, clips, scenes and tempo come across. Drum and keys tracks can use your desktop instruments "
+                  "(Vega Productions Drums / Multisynth if installed) as MIDI you can edit, or the phone's own sound as audio.", juce::MessageBoxIconType::NoIcon);
+            w->addComboBox ("sounds", { "Desktop instruments (MIDI, editable)", "Phone sounds (audio, exactly as on the phone)", "Both (phone audio muted underneath)" }, "Sounds");
+            w->addComboBox ("where", { "Into a new project", "Into this project" }, "Where");
+            w->addComboBox ("arr", { "Clip launcher + the scenes laid out in the arrangement", "Clip launcher only" }, "Layout");
+            w->addButton ("Import", 1, juce::KeyPress (juce::KeyPress::returnKey)); w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+            w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, f] (int r)
+            {
+                std::unique_ptr<juce::AlertWindow> owner (w);
+                if (r != 1) return;
+                DawSession::SketchImport opt;
+                const int snd = w->getComboBoxComponent ("sounds")->getSelectedItemIndex();
+                opt.sounds = snd == 1 ? DawSession::SketchImport::Sounds::phone : snd == 2 ? DawSession::SketchImport::Sounds::both : DawSession::SketchImport::Sounds::desktop;
+                opt.toArrangement = w->getComboBoxComponent ("arr")->getSelectedItemIndex() == 0;
+                const bool fresh = w->getComboBoxComponent ("where")->getSelectedItemIndex() == 0;
+                auto run = [this, f, opt, fresh]
+                {
+                    auto o = opt;
+                    if (fresh) { session.newProject(); for (auto* t : session.getTracks()) session.deleteTrack (*t); }
+                    else o.adoptTempo = false;
+                    auto res = session.importSketch (f, o);
+                    arrange.rebuildHeaders(); mixer.rebuild(); transport.refreshFromEdit(); setupInputs();
+                    juce::AlertWindow::showMessageBoxAsync (res.ok ? juce::MessageBoxIconType::InfoIcon : juce::MessageBoxIconType::WarningIcon, "Import phone sketch", res.message);
+                    if (res.ok) showSession (true);
+                };
+                if (fresh) confirmDiscard (run); else run();
+            }), false);
+        });
+    }
+
     void showSongMap()
     {
         juce::DialogWindow::LaunchOptions o;

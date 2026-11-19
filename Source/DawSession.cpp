@@ -1032,3 +1032,145 @@ void DawSession::setElastic (te::WaveAudioClip& ac, bool on)
         wtm.insertMarker (te::WarpMarker (te::TimePosition() + len, te::TimePosition() + len));
     }
 }
+
+//============================================================================== phone sketches
+const juce::PluginDescription* DawSession::findPlugin (const juce::String& part) const
+{
+    static juce::PluginDescription found;
+    for (auto& d : engine.getPluginManager().knownPluginList.getTypes())
+        if (d.name.containsIgnoreCase (part) && d.isInstrument) { found = d; return &found; }
+    return nullptr;
+}
+
+DawSession::SketchResult DawSession::importSketch (const juce::File& file, const SketchImport& opt)
+{
+    SketchResult res;
+    // unpack next to the project (or in Documents/Vega Productions)
+    juce::File dir;
+    if (file.isDirectory()) dir = file;
+    else
+    {
+        juce::ZipFile zip (file);
+        if (zip.getNumEntries() == 0) { res.message = "That isn't a Vega Sketch file."; return res; }
+        dir = mediaFolder ("Phone sketches").getNonexistentChildFile (juce::File::createLegalFileName (file.getFileNameWithoutExtension()), {}, false);
+        dir.createDirectory();
+        if (zip.uncompressTo (dir, true).failed()) { res.message = "Couldn't unpack the sketch."; return res; }
+    }
+    auto json = juce::JSON::parse (dir.getChildFile ("sketch.json"));
+    if (json.getProperty ("format", {}).toString() != "vega-sketch") { res.message = "sketch.json is missing - is this a Vega Sketch export?"; return res; }
+    res.name = json.getProperty ("name", "Phone sketch").toString();
+    const double bpm = (double) json.getProperty ("bpm", 120.0);
+    const int bpb = juce::jlimit (2, 12, (int) json.getProperty ("beatsPerBar", 4));
+    auto& um = editPtr->getUndoManager();
+    um.beginNewTransaction ("Import phone sketch");
+    if (opt.adoptTempo) { setTempo (bpm); setTimeSig (bpb, 4); }
+
+    // scenes
+    auto* scenesArr = json.getProperty ("scenes", {}).getArray();
+    const int sceneCount = scenesArr != nullptr ? scenesArr->size() : 8;
+    const int sceneBase = [this] { int used = 0; for (auto* t : getTracks (true)) for (int i = 0; i < numScenes(); ++i) if (slotClip (*t, i) != nullptr) used = std::max (used, i + 1); return used; }();
+    ensureScenes (sceneBase + std::max (8, sceneCount));
+    if (scenesArr != nullptr)
+        for (int i = 0; i < scenesArr->size(); ++i)
+            if (auto* sc = editPtr->getSceneList().getScenes()[sceneBase + i]) sc->name = (*scenesArr)[i].toString();
+
+    struct Placed { te::Clip* clip; int scene; double beats; };
+    std::vector<Placed> placed;
+    auto* tracksArr = json.getProperty ("tracks", {}).getArray();
+    if (tracksArr == nullptr || tracksArr->isEmpty()) { res.message = "The sketch has no tracks."; return res; }
+    auto colourOf = [] (const juce::var& t) { return juce::Colour::fromString ("ff" + t.getProperty ("colour", "#6fb7ff").toString().removeCharacters ("#")); };
+    auto gainDb = [] (const juce::var& t) { return juce::Decibels::gainToDecibels ((float) (double) t.getProperty ("volume", 0.8), -60.0f); };
+
+    for (auto& tv : *tracksArr)
+    {
+        const auto type = tv.getProperty ("type", "keys").toString();
+        const auto name = tv.getProperty ("name", "Track").toString();
+        auto* clips = tv.getProperty ("clips", {}).getArray();
+        const bool audioTrack = type == "audio";
+        const bool wantMidi = ! audioTrack && opt.sounds != SketchImport::Sounds::phone;
+        const bool wantPrint = ! audioTrack && opt.sounds != SketchImport::Sounds::desktop;
+        auto setup = [&] (te::AudioTrack* t, bool muted)
+        {
+            t->state.setProperty ("vegaColour", (juce::int64) colourOf (tv).getARGB(), nullptr);
+            if (auto vp = t->getVolumePlugin()) { vp->setVolumeDb (gainDb (tv) - (audioTrack ? 0.0f : 6.0f)); vp->setPan ((float) (double) tv.getProperty ("pan", 0.0)); }
+            t->setMute (muted || (bool) tv.getProperty ("mute", false));
+            ++res.tracks;
+        };
+        if (audioTrack || wantPrint)
+        {
+            auto* t = addTrack (TrackKind::audio, audioTrack ? name : name + " (phone)");
+            if (t == nullptr) continue;
+            setup (t, wantMidi && wantPrint);
+            if (clips != nullptr)
+                for (auto& cv : *clips)
+                {
+                    const auto rel = (audioTrack ? cv.getProperty ("audio", {}) : cv.getProperty ("render", {})).toString();
+                    const auto f = dir.getChildFile (rel);
+                    if (rel.isEmpty() || ! f.existsAsFile()) continue;
+                    const int sc = sceneBase + (int) cv.getProperty ("scene", 0);
+                    if (auto* c = insertSlotFile (*t, sc, f))
+                    {
+                        c->setName (cv.getProperty ("name", "Clip").toString());
+                        const double beats = (double) cv.getProperty ("lengthBeats", 4.0);
+                        c->setLoopRange ({ te::TimePosition(), editPtr->tempoSequence.toTime (te::BeatPosition::fromBeats (beats)) });
+                        placed.push_back ({ c, sc, beats }); ++res.clips;
+                    }
+                }
+        }
+        if (wantMidi)
+        {
+            auto* t = addTrack (TrackKind::midi, name);
+            if (t == nullptr) continue;
+            const bool drums = type == "drums";
+            if (auto* d = findPlugin (drums ? "Vega Productions Drums" : "Vega Productions Multisynth")) setInstrument (*t, te::ExternalPlugin::xmlTypeName, d);
+            setup (t, false);
+            if (clips != nullptr)
+                for (auto& cv : *clips)
+                {
+                    const int sc = sceneBase + (int) cv.getProperty ("scene", 0);
+                    const int bars = std::max (1, (int) cv.getProperty ("bars", 1));
+                    auto* mc = createSlotMidiClip (*t, sc, bars);
+                    if (mc == nullptr) continue;
+                    mc->setName (cv.getProperty ("name", "Clip").toString());
+                    const double beats = bars * (double) bpb;
+                    mc->setLoopRangeBeats ({ te::BeatPosition(), te::BeatDuration::fromBeats (beats) });
+                    if (auto* notes = cv.getProperty ("notes", {}).getArray())
+                        for (auto& n : *notes)
+                            if (auto* a = n.getArray(); a != nullptr && a->size() >= 4)
+                                mc->getSequence().addNote ((int) (*a)[0], te::BeatPosition::fromBeats ((double) (*a)[1]), te::BeatDuration::fromBeats (std::max (0.02, (double) (*a)[2])),
+                                                           juce::jlimit (1, 127, (int) (*a)[3]), 0, nullptr);
+                    placed.push_back ({ mc, sc, beats }); ++res.clips;
+                }
+        }
+    }
+
+    // the arrangement: scene after scene, each as long as its longest clip, with a marker for each
+    if (opt.toArrangement)
+    {
+        auto& ts = editPtr->tempoSequence;
+        double at = 0;
+        for (auto* t : getTracks (true)) for (auto* c : t->getClips()) at = std::max (at, ts.toBeats (c->getPosition().getEnd()).inBeats());
+        at = std::ceil (at / bpb) * bpb;
+        for (int sc = sceneBase; sc < sceneBase + sceneCount; ++sc)
+        {
+            double len = 0;
+            for (auto& p : placed) if (p.scene == sc) len = std::max (len, p.beats);
+            if (len <= 0) continue;
+            juce::String sname = "Scene " + juce::String (sc - sceneBase + 1);
+            if (auto* s2 = editPtr->getSceneList().getScenes()[sc]) if (s2->name.get().isNotEmpty()) sname = s2->name.get();
+            addMarker (ts.toTime (te::BeatPosition::fromBeats (at)), sname);
+            for (auto& p : placed)
+                if (p.scene == sc)
+                    if (auto* c = copyToArrangement (*p.clip, ts.toTime (te::BeatPosition::fromBeats (at))))
+                    {
+                        if (dynamic_cast<te::MidiClip*> (c) != nullptr) c->setLoopRangeBeats ({ te::BeatPosition(), te::BeatDuration::fromBeats (p.beats) });
+                        else c->setLoopRange ({ te::TimePosition(), ts.toTime (te::BeatPosition::fromBeats (p.beats)) });
+                        c->setPosition ({ { ts.toTime (te::BeatPosition::fromBeats (at)), ts.toTime (te::BeatPosition::fromBeats (at + len)) }, te::TimeDuration() });
+                    }
+            at += len;
+        }
+    }
+    res.ok = res.clips > 0 || res.tracks > 0;
+    res.message = "Imported \"" + res.name + "\": " + juce::String (res.tracks) + " tracks, " + juce::String (res.clips) + " clips.";
+    return res;
+}
