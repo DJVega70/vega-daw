@@ -128,7 +128,7 @@ function(vega_stem_helper target product lib)
 endfunction()
 vega_stem_helper(VegaStemHelper VegaStemHelper vega_demucs)
 if (MSVC)
-    vega_stem_helper(VegaStemHelperAVX2 VegaStemHelper-AVX2 vega_demucs_avx2)
+    vega_stem_helper(VegaStemHelperAVX2 VegaStemHelperAVX2 vega_demucs_avx2)
 endif()
 
 # headless self-test (engine round trips: tracks, clips, routing, render)

@@ -10,7 +10,7 @@ struct StemClient
     {
         auto dir = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getParentDirectory();
        #if JUCE_WINDOWS
-        return dir.getChildFile (avx2 ? "VegaStemHelper-AVX2.exe" : "VegaStemHelper.exe");
+        return dir.getChildFile (avx2 ? "VegaStemHelperAVX2.exe" : "VegaStemHelper.exe");
        #else
         return dir.getChildFile ("VegaStemHelper");
        #endif
