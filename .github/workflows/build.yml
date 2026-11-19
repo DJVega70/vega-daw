@@ -97,6 +97,61 @@ jobs:
             VegaProductions-DAW-Windows.zip
             VegaProductions-DAW-Setup.exe
 
+  android:
+    name: Android app (Vega Sketch)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Phone engine self-test (C++, on Linux)
+        run: |
+          g++ -std=c++17 -O2 -Iandroid/app/src/main/cpp android/app/src/test/cpp/engine_test.cpp android/app/src/main/cpp/SketchEngine.cpp -o engine_test -lpthread
+          mkdir -p sketch-test && ./engine_test sketch-test
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+      # One fixed signing key, so each new APK installs over the last one: the VEGA_KEYSTORE_B64 / VEGA_KEYSTORE_PASSWORD
+      # secrets if they're set, otherwise a key generated once and kept in the Actions cache.
+      - name: Restore the signing key
+        id: keycache
+        uses: actions/cache@v4
+        with:
+          path: ~/.vega-signing
+          key: vega-sketch-signing-key-v1
+      - name: Signing key
+        env:
+          KS_B64: ${{ secrets.VEGA_KEYSTORE_B64 }}
+          KS_PW: ${{ secrets.VEGA_KEYSTORE_PASSWORD }}
+        run: |
+          mkdir -p ~/.vega-signing
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > ~/.vega-signing/release.jks; echo -n "$KS_PW" > ~/.vega-signing/pw; echo "Using the repository secret key"
+          elif [ ! -f ~/.vega-signing/release.jks ]; then
+            PW=$(openssl rand -base64 18); echo -n "$PW" > ~/.vega-signing/pw
+            keytool -genkeypair -keystore ~/.vega-signing/release.jks -storetype PKCS12 -alias vega -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$PW" -keypass "$PW" -dname "CN=Vega Productions, O=Vega Productions, C=US"
+            echo "Generated a new signing key (kept in the Actions cache)"
+          else
+            echo "Using the cached key"
+          fi
+          echo "VEGA_KEYSTORE=$HOME/.vega-signing/release.jks" >> $GITHUB_ENV
+          echo "VEGA_KEYSTORE_PASSWORD=$(cat ~/.vega-signing/pw)" >> $GITHUB_ENV
+      - name: Build the APK
+        working-directory: android
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+          VERSION_NAME: 0.1.${{ github.run_number }}
+        run: gradle assembleRelease --no-daemon --stacktrace
+      - name: Collect
+        run: cp android/app/build/outputs/apk/release/app-release.apk VegaSketch-Android.apk && ls -la VegaSketch-Android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VegaSketch-Android
+          path: VegaSketch-Android.apk
+
   macos:
     name: macOS app (Universal)
     if: false   # Mac build switched off (no Mac in the studio right now) - delete this line to turn it back on
@@ -125,7 +180,7 @@ jobs:
 
   release:
     name: Publish release
-    needs: [test, windows, macos]
+    needs: [test, windows, macos, android]
     # publish whenever the tests and Windows build pass; GitHub's macOS runners are sometimes unavailable
     if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.result == 'success' && needs.windows.result == 'success'
     runs-on: ubuntu-latest
@@ -138,7 +193,7 @@ jobs:
       - name: Collect zips
         run: |
           mkdir out
-          find dist \( -name '*.zip' -o -name '*Setup.exe' \) -exec cp {} out/ \;
+          find dist \( -name '*.zip' -o -name '*Setup.exe' -o -name '*.apk' \) -exec cp {} out/ \;
           ls -la out
       - name: Carry over the previous Mac build if this run has none
         env:
@@ -155,9 +210,11 @@ jobs:
           make_latest: true
           body: |
             **Windows (recommended):** download `VegaProductions-DAW-Setup.exe` and run it. It installs to Program Files, adds Start menu (and optional desktop) shortcuts, opens `.vegaproj` projects, and shows up in Settings > Apps for uninstalling. Running a newer Setup updates your install.
+            **Android phone (Vega Sketch):** download `VegaSketch-Android.apk` on the phone and open it (allow installing from your browser / Files the first time). Send sketches to the PC from the menu, then File > Import phone sketch in the DAW.
             **Windows (portable):** `VegaProductions-DAW-Windows.zip`, unzip anywhere and run `Vega Productions DAW.exe`.
             **Mac:** download `VegaProductions-DAW-macOS.zip`, drag the app to Applications, then run once in Terminal:
             `xattr -cr "/Applications/Vega Productions DAW.app"`
           files: |
             out/*.zip
             out/*.exe
+            out/*.apk

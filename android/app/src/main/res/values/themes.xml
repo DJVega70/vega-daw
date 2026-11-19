@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.VegaSketch" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/vega_navy</item>
+        <item name="android:statusBarColor">@color/vega_navy</item>
+        <item name="android:navigationBarColor">@color/vega_navy</item>
+    </style>
+    <color name="vega_navy">#FF0B1426</color>
+    <color name="vega_gold">#FFD4AF37</color>
+</resources>
