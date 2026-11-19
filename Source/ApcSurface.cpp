@@ -52,6 +52,7 @@ void ApcSurface::handleIncoming (const juce::MidiMessage& m)
     const int n = m.getNoteNumber();
     const bool down = m.isNoteOn();
     if (n == shiftNote) { shift = down; updateFeedback (true); return; }
+    if (drumPads && n < padRows * padCols) { drumPad (n, down); return; }
     if (! down) return;
     if (n < padRows * padCols) { pad (padRows - 1 - n / padCols, n % padCols); return; }       // note 0 = bottom-left pad
     if (n >= trackButton0 && n < trackButton0 + 8) { trackButton (n - trackButton0); return; }
@@ -64,7 +65,32 @@ void ApcSurface::handleIncoming (const juce::MidiMessage& m)
         else if (tr.isPlaying()) tr.stop (false, false); else tr.play (false);
         return;
     }
-    if (n == recordNote) { if (tr.isRecording()) tr.stop (true, false); else tr.record (false); }
+    if (n == recordNote)
+    {
+        if (shift) { drumPads = ! drumPads; lastPad.fill (-1); updateFeedback (true); return; }
+        if (tr.isRecording()) tr.stop (true, false); else tr.record (false);
+    }
+}
+
+te::AudioTrack* ApcSurface::instrumentTrack() const
+{
+    te::AudioTrack* first = nullptr;
+    for (auto* t : s.getTracks (false))
+    {
+        if (DawSession::kindOf (*t) != DawSession::TrackKind::midi) continue;
+        if (t->itemID == selectedID) return t;
+        if (first == nullptr) first = t;
+    }
+    return first;
+}
+
+void ApcSurface::drumPad (int index, bool down)
+{
+    auto* t = instrumentTrack();
+    if (t == nullptr) return;
+    const int note = juce::jlimit (0, 127, drumBaseNote + index);
+    t->injectLiveMidiMessage (down ? juce::MidiMessage::noteOn (1, note, (juce::uint8) 110) : juce::MidiMessage::noteOff (1, note), {});
+    padDown[(size_t) index] = down;
 }
 
 void ApcSurface::pad (int row, int col)
@@ -233,6 +259,18 @@ void ApcSurface::updateFeedback (bool forceAll)
     };
     // pads: clip colour (dim), playing = bright green, queued = blinking, empty slot on an armed track = dim red
     std::array<bool, 5> rowPlaying {}, rowQueued {};
+    if (drumPads)
+    {   // drum pads: the instrument track's colour, white while held; every 4th note (C, E, G#) a little brighter
+        auto* t = instrumentTrack();
+        const int col = t != nullptr ? nearestPaletteColour (DawSession::trackColour (*t)) : 9;
+        for (int note = 0; note < padRows * padCols; ++note)
+        {
+            const int chan = padDown[(size_t) note] ? 6 : (note % 4 == 0 ? 3 : 1), colour = padDown[(size_t) note] ? 3 : col;
+            const int key = (chan << 8) | colour;
+            if (lastPad[(size_t) note] != key) { lastPad[(size_t) note] = key; send (juce::MidiMessage::noteOn (chan + 1, note, (juce::uint8) colour)); }
+        }
+    }
+    else
     for (int col = 0; col < padCols; ++col)
     {
         auto* t = trackForColumn (col);
@@ -299,7 +337,7 @@ void ApcSurface::updateFeedback (bool forceAll)
     }
     auto& tr = s.edit().getTransport();
     led (playNote, tr.isPlaying() ? 1 : 0);
-    led (recordNote, tr.isRecording() ? 1 : 0);
+    led (recordNote, tr.isRecording() ? 1 : (shift && drumPads ? 1 : 0));
 }
 
 juce::String ApcSurface::describe (const juce::MidiMessage& m) const

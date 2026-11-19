@@ -166,6 +166,7 @@ The DAW has a built-in script for the APC Key 25 mk2. It is laid out like Ableto
 | K1-K8 | The 8 tracks shown (or the plug-in). Knob moves are recorded when WRITE is on. |
 | Stop All Clips | Stop the launcher. Shift + Stop All Clips goes back to the arrangement. |
 | ▶/II, ● | Play / stop and record. Shift + Play returns to the start. |
+| Shift + ● | **Drum pads** on / off. The 40 pads play the selected instrument track (GM drum notes starting at 36 on the bottom-left pad, so they play Vega Productions Drums). |
 
 ## Roadmap
 - **Stage 2:** ✅ HUI / FLkey 2 controller script. Next: automation lanes, MIDI-learn, Mackie Control (MCU), warp markers, track freeze.

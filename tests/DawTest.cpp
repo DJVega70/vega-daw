@@ -739,6 +739,10 @@ int main()
         note (0x21);                                                       // pad with the clip: launch (no audio device - mustn't crash)
         note (0x51); note (0x62); note (0x51); note (0x62, false);
         check (! syn->playSlotClips.get(), "APC: Shift + Stop All Clips = back to arrangement");
+        note (0x62); note (0x5d); note (0x62, false);                       // shift + record = drum pads
+        sent.clear();
+        note (0); apc.updateFeedback(); note (0, false);
+        check (apc.drumPads && ! sent.empty() && ! as.edit().getTransport().isRecording(), "APC: Shift + Record turns the pads into drum pads (no recording started)");
     }
     out.deleteFile(); proj.deleteFile();
     std::cout << (fails == 0 ? "ALL PASSED" : "FAILURES: " + std::to_string (fails)) << "\n";

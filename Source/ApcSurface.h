@@ -17,6 +17,8 @@
                            or (DEVICE) the first 8 parameters of the selected track's plug-in.
       STOP ALL CLIPS       stops every launcher clip. Shift + STOP ALL = back to arrangement.
       Play / Record        transport. Shift + Play = back to the start.
+      Shift + Record       drum pads on / off: the 40 pads play the selected instrument track
+                           (GM drum notes from 36 up, bottom-left first), so they play Vega Productions Drums.
 */
 class ApcSurface
 {
@@ -39,6 +41,8 @@ public:
     KnobMode knobMode = KnobMode::volume;
     int trackOffset = 0, sceneOffset = 0;
     bool shift = false;
+    bool drumPads = false;
+    static constexpr int drumBaseNote = 36;
     te::EditItemID selectedID;                               // keep in sync with the UI selection
 
     juce::Array<te::AudioTrack*> columns() const;            // the tracks the launcher shows
@@ -51,6 +55,8 @@ public:
 
 private:
     void pad (int row, int col);
+    void drumPad (int index, bool down);
+    te::AudioTrack* instrumentTrack() const;
     void trackButton (int i);
     void sceneButton (int i);
     void knob (int i, int delta);
@@ -59,7 +65,8 @@ private:
     void touch (te::AutomatableParameter*);
     void endGestures (bool all);
     DawSession& s;
-    std::array<int, 40> lastPad {};                          // (behaviour channel << 8) | colour, -1 = unknown
+    std::array<int, 40> lastPad {};
+    std::array<bool, 40> padDown {};                          // (behaviour channel << 8) | colour, -1 = unknown
     std::map<int, int> lastLed;
     int blink = 0;
     struct Gesture { te::AutomatableParameter::Ptr param; juce::uint32 last = 0; };
