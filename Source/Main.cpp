@@ -391,6 +391,25 @@ private:
         for (auto& d : engine.getDeviceManager().getMidiInDevices()) names.add (d->getName());
         const auto sig = names.joinIntoString ("|");
         if (sig != midiInputsSeen) { const bool first = midiInputsSeen.isEmpty(); midiInputsSeen = sig; if (! first) setupInputs(); }
+        // a keyboard that was switched on a moment ago only shows up in the edit once the engine has opened it:
+        // keep checking, so its keys always end up on the selected instrument instead of "not connected to a track"
+        if (++routeTicks >= 2) { routeTicks = 0; if (keysUnrouted()) routeMidiToSelectedTrack(); }
+    }
+    int routeTicks = 0;
+    bool keysUnrouted()
+    {
+        bool anyInstrument = false;
+        for (auto* t : session.getTracks()) if (DawSession::kindOf (*t) == DawSession::TrackKind::midi) anyInstrument = true;
+        if (! anyInstrument) return false;
+        for (auto* in : session.edit().getAllInputDevices())
+        {
+            auto& dev = in->getInputDevice();
+            if (dev.getDeviceType() != te::InputDevice::physicalMidiDevice || ! dev.isEnabled() || isControllerPort (dev.getName())) continue;
+            bool targeted = false;
+            for (auto* t : session.getTracks()) if (te::isOnTargetTrack (*in, *t, 0)) targeted = true;
+            if (! targeted) return true;
+        }
+        return false;
     }
     int autosaveTicks = 0;
     juce::String midiInputsSeen;
