@@ -7,6 +7,7 @@
 #include "Controllers.h"
 #include "PluginBrowser.h"
 #include "StemSeparator.h"
+#include "StemClient.h"
 #include "RoutingMatrix.h"
 
 //==============================================================================
@@ -423,8 +424,8 @@ private:
             Job (te::Engine& e, StemSeparator::Model mm, juce::File src, juce::File out) : ThreadWithProgressWindow ("Separating stems...", true, true), engine (e), model (mm), source (src), outDir (out) {}
             void run() override
             {
-                result = StemSeparator::separate (model, source, outDir, engine.getAudioFileFormatManager().readFormatManager,
-                    [this] (float p, const juce::String& msg) { setProgress (p); setStatusMessage (msg); return ! threadShouldExit(); });
+                result = StemClient::separate (model, source, outDir,
+                    [this] (float p, const juce::String& msg) { if (p >= 0) { setProgress (p); setStatusMessage (msg); } return ! threadShouldExit(); });
             }
             te::Engine& engine; StemSeparator::Model model; juce::File source, outDir; StemSeparator::Result result;
         } job (engine, m, source, outDir);

@@ -1,6 +1,7 @@
 #include "../Source/DawSession.h"
 #include "../Source/HuiSurface.h"
 #include "../Source/StemSeparator.h"
+#include "../Source/StemClient.h"
 #include "../Source/DawUI.h"
 #include <iostream>
 static int fails = 0;
@@ -345,6 +346,28 @@ int main()
                                           juce::File::getSpecialLocation (juce::File::tempDirectory), fm, nullptr);
         check (! r.ok && r.error.isNotEmpty(), "separation reports a clear error when it can't run (" + r.error + ")");
     }
+   #if ! JUCE_WINDOWS
+    {   // DAW side of the helper: a helper that crashes mid-way is reported (DAW keeps running); a good run is read back
+        auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_helper_test");
+        dir.deleteRecursively(); dir.createDirectory();
+        auto script = [&] (const char* name, const juce::String& body) { auto f = dir.getChildFile (name); f.replaceWithText ("#!/bin/sh\n" + body, false, false, "\n"); f.setExecutePermission (true); return f; };
+        auto crasher = script ("crash.sh", "echo 'PROGRESS 0.0300 Separating: 3%'\nkill -SEGV $$\n");
+        auto good = script ("good.sh", "echo 'load_demucs_model: chatter'\necho 'PROGRESS 0.5000 Separating: 50%  Freq encoder 2'\necho \"STEM " + dir.getFullPathName() + "/a - Drums.wav\"\necho \"STEM " + dir.getFullPathName() + "/a - Bass.wav\"\necho DONE\n");
+        auto failing = script ("fail.sh", "echo 'ERROR Not enough memory to separate this file.'\nexit 2\n");
+        bool crashed = false, cancelled = false; float seen = 0;
+        auto prog = [&] (float p, const juce::String&) { if (p >= 0) seen = p; return true; };
+        auto r1 = StemClient::runOnce (crasher, StemSeparator::Model::fourStems, dir, dir, prog, crashed, cancelled);
+        check (! r1.ok && crashed && r1.error.contains ("stopped unexpectedly") && std::abs (seen - 0.03f) < 1e-4f, "helper crash at 3% is caught and reported, DAW survives (" + r1.error.upToFirstOccurrenceOf ("\n", false, false) + ")");
+        auto r2 = StemClient::runOnce (good, StemSeparator::Model::fourStems, dir, dir, prog, crashed, cancelled);
+        check (r2.ok && ! crashed && r2.stems.size() == 2 && r2.stems[1].getFileName() == "a - Bass.wav" && std::abs (seen - 0.5f) < 1e-4f, "helper progress and stem files are read back");
+        auto r3 = StemClient::runOnce (failing, StemSeparator::Model::fourStems, dir, dir, prog, crashed, cancelled);
+        check (! r3.ok && ! crashed && r3.error == "Not enough memory to separate this file.", "helper error message is passed through");
+        int calls = 0;
+        auto r4 = StemClient::runOnce (good, StemSeparator::Model::fourStems, dir, dir, [&] (float, const juce::String&) { return ++calls < 3; }, crashed, cancelled);
+        check (! r4.ok && cancelled && r4.error.isEmpty(), "cancel stops the helper");
+        dir.deleteRecursively();
+    }
+   #endif
     {   // automation: a volume ramp written into the curve plays back in the render, and is saved
         DawSession a (engine);
         auto tone = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_auto_tone.wav");

@@ -34,8 +34,7 @@ target_sources(VegaDAW PRIVATE
     Source/PianoRoll.cpp
     Source/MixerView.cpp
     Source/HuiSurface.cpp
-    Source/Controllers.cpp
-    Source/StemSeparator.cpp)
+    Source/Controllers.cpp)
 
 target_compile_definitions(VegaDAW PRIVATE
     JUCE_PLUGINHOST_AU=1
@@ -90,18 +89,47 @@ else()
     set(VEGA_EIGEN_INCLUDE ${eigen_SOURCE_DIR})
 endif()
 file(GLOB DEMUCS_SOURCES ${demucs_SOURCE_DIR}/src/*.cpp)
-add_library(vega_demucs STATIC ${DEMUCS_SOURCES})
-target_include_directories(vega_demucs PUBLIC ${demucs_SOURCE_DIR}/src ${VEGA_EIGEN_INCLUDE})
-target_compile_features(vega_demucs PUBLIC cxx_std_17)
-target_compile_definitions(vega_demucs PRIVATE NDEBUG PUBLIC EIGEN_NO_DEBUG _USE_MATH_DEFINES)
-set_target_properties(vega_demucs PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# The separation runs in a helper program (VegaStemHelper), not inside the DAW: a crash or out-of-memory
+# there can't take the session down. On Windows there are two builds - AVX2 (fast) and a generic one for
+# any x64 CPU. Every file that touches Eigen in a helper is compiled with exactly the same flags, so all of
+# them agree on Eigen's memory alignment (mixing AVX2 and non-AVX2 Eigen code crashes).
+function(vega_stem_variant suffix arch)
+    set(lib vega_demucs${suffix})
+    add_library(${lib} STATIC ${DEMUCS_SOURCES})
+    target_include_directories(${lib} PUBLIC ${demucs_SOURCE_DIR}/src ${VEGA_EIGEN_INCLUDE})
+    target_compile_features(${lib} PUBLIC cxx_std_17)
+    target_compile_definitions(${lib} PUBLIC NDEBUG EIGEN_NO_DEBUG _USE_MATH_DEFINES)
+    set_target_properties(${lib} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    if (MSVC)
+        target_compile_options(${lib} PUBLIC /O2 /bigobj /EHsc /W0 ${arch})
+    else()
+        target_compile_options(${lib} PUBLIC -O3 -w ${arch})
+    endif()
+    set(VEGA_DEMUCS_LIB_${suffix} ${lib} PARENT_SCOPE)
+endfunction()
+vega_stem_variant("" "")
 if (MSVC)
-    target_compile_options(vega_demucs PRIVATE /O2 /bigobj /EHsc /W0 /arch:AVX2)
-    target_compile_options(vega_demucs PUBLIC /bigobj)
-else()
-    target_compile_options(vega_demucs PRIVATE -O3 -w)
+    vega_stem_variant("_avx2" "/arch:AVX2")
 endif()
-target_link_libraries(VegaDAW PRIVATE vega_demucs)
+
+function(vega_stem_helper target product lib)
+    juce_add_console_app(${target} PRODUCT_NAME "${product}")
+    target_sources(${target} PRIVATE Source/StemHelper.cpp Source/StemSeparator.cpp)
+    target_compile_definitions(${target} PRIVATE JUCE_USE_MP3AUDIOFORMAT=1 JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
+    target_link_libraries(${target} PRIVATE ${lib} juce::juce_audio_formats juce::juce_core)
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_libraries(${target} PRIVATE "-latomic")
+    endif()
+    add_dependencies(VegaDAW ${target})
+    # put the helper next to the DAW executable
+    add_custom_command(TARGET ${target} POST_BUILD COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:VegaDAW>"
+                       COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:${target}>" "$<TARGET_FILE_DIR:VegaDAW>")
+endfunction()
+vega_stem_helper(VegaStemHelper VegaStemHelper vega_demucs)
+if (MSVC)
+    vega_stem_helper(VegaStemHelperAVX2 VegaStemHelper-AVX2 vega_demucs_avx2)
+endif()
 
 # headless self-test (engine round trips: tracks, clips, routing, render)
 option(VEGA_TESTS "Build the headless test app" OFF)
