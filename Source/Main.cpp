@@ -738,11 +738,15 @@ private:
         w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int r)
         {
             std::unique_ptr<juce::AlertWindow> owner (w);
-            if (r == 2) { apc.autoConnect (true); setupInputs(); if (! apc.isConnected()) juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "APC Key 25", "No APC Key 25 mk2 found - is it plugged in?"); return; }
+            if (r == 2) { apc.autoConnect (true); setupInputs(); if (! apc.isConnected()) juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "APC Key 25", apc.lastError.isNotEmpty() ? apc.lastError
+                : juce::String ("The APC's control port (\"MIDIIN2 (APC Key 25 mk2)\") isn't showing. Unplug the APC, plug it back in, close any other app using it, then press Auto-detect again.")); return; }
             if (r != 1) return;
             auto* in = w->getComboBoxComponent ("in"); auto* out = w->getComboBoxComponent ("out");
-            apc.connect (in->getSelectedItemIndex() > 0 ? in->getText() : juce::String(), out->getSelectedItemIndex() > 0 ? out->getText() : juce::String(), true);
+            const bool ok = apc.connect (in->getSelectedItemIndex() > 0 ? in->getText() : juce::String(), out->getSelectedItemIndex() > 0 ? out->getText() : juce::String(), true);
             setupInputs();
+            if (! ok && apc.lastError.isNotEmpty()) juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "APC Key 25", apc.lastError);
+            else if (ok && apc.inputName != in->getText()) juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "APC Key 25",
+                "\"" + in->getText() + "\" is the APC's keys port, so the pads and knobs were connected to \"" + apc.inputName + "\" instead. The keys keep playing your instrument.");
         }), false);
     }
 

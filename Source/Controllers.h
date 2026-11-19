@@ -63,7 +63,7 @@ public:
     bool connect (const juce::String& inName, const juce::String& outName, bool userChoice = false);
     void autoConnect (bool forceAuto = false);
     bool isConnected() const { return input != nullptr; }
-    juce::String inputName, outputName;
+    juce::String inputName, outputName, lastError;
     static bool isApcControlPort (const juce::String& name);   // "MIDIIN2 (APC Key 25 mk2)" (Windows), "APC Key 25 mk2 Control" (Mac)
     void editChanged() { surface.trackOffset = surface.sceneOffset = 0; surface.updateFeedback (true); }
     juce::StringArray log;

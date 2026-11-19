@@ -198,17 +198,43 @@ bool ApcHub::connect (const juce::String& inName, const juce::String& outName, b
         if (userChoice) { juce::XmlElement x ("VegaApc"); x.setAttribute ("off", 1); x.writeTo (settingsFile()); }
         return false;
     }
+    // The APC's first port ("APC Key 25 mk2") is its keys. Pads, buttons and knobs only talk on the second
+    // (control) port, and taking the first port here would also silence the keys. So never use it: swap to
+    // the control port when there is one, otherwise leave the keys alone and say so.
+    auto isKeysPort = [] (const juce::String& n) { return n.containsIgnoreCase ("APC Key 25") && ! isApcControlPort (n); };
+    juce::String in = inName, out = outName;
+    if (isKeysPort (in))
+    {
+        in = {};
+        for (auto& d : juce::MidiInput::getAvailableDevices()) if (isApcControlPort (d.name)) { in = d.name; break; }
+        if (in.isEmpty())
+        {
+            log.add ("\"" + inName + "\" is the APC's keys port - its pads use the second (control) port, which Windows isn't showing. Unplug the APC and plug it back in.");
+            lastError = "\"" + inName + "\" is the APC's keys port. The pads and knobs use its second port (\"MIDIIN2 (APC Key 25 mk2)\"), which isn't showing right now - "
+                        "unplug the APC, plug it back in and press Auto-detect. Close any other app that uses the APC (Ableton, a browser MIDI page) first.";
+            return false;
+        }
+        log.add ("Switched from the keys port to the control port: " + in);
+    }
+    if (out.isEmpty() || isKeysPort (out))
+    {
+        out = {};
+        const auto want = in.replace ("MIDIIN2", "MIDIOUT2");
+        for (auto& d : juce::MidiOutput::getAvailableDevices()) if (d.name == want) out = d.name;
+        if (out.isEmpty()) for (auto& d : juce::MidiOutput::getAvailableDevices()) if (isApcControlPort (d.name)) { out = d.name; break; }
+    }
+    lastError = {};
     // Windows lets only one connection use a MIDI port: keep the engine off the control port
     auto& dm = engine.getDeviceManager();
-    for (auto& d : dm.getMidiInDevices()) if (d->getName() == inName) d->setEnabled (false);
-    for (int i = 0; i < dm.getNumMidiOutDevices(); ++i) if (auto* d = dm.getMidiOutDevice (i)) if (d->getName() == outName) d->setEnabled (false);
-    for (auto& d : juce::MidiInput::getAvailableDevices()) if (d.name == inName) input = juce::MidiInput::openDevice (d.identifier, this);
-    for (auto& d : juce::MidiOutput::getAvailableDevices()) if (d.name == outName) output = juce::MidiOutput::openDevice (d.identifier);
-    if (input == nullptr) { log.add ("Couldn't open " + inName); return false; }
+    for (auto& d : dm.getMidiInDevices()) if (d->getName() == in) d->setEnabled (false);
+    for (int i = 0; i < dm.getNumMidiOutDevices(); ++i) if (auto* d = dm.getMidiOutDevice (i)) if (d->getName() == out) d->setEnabled (false);
+    for (auto& d : juce::MidiInput::getAvailableDevices()) if (d.name == in) input = juce::MidiInput::openDevice (d.identifier, this);
+    for (auto& d : juce::MidiOutput::getAvailableDevices()) if (d.name == out) output = juce::MidiOutput::openDevice (d.identifier);
+    if (input == nullptr) { log.add ("Couldn't open " + in); lastError = "Couldn't open \"" + in + "\" - is another app (Ableton, a browser MIDI page) using the APC?"; return false; }
     input->start();
-    inputName = inName; outputName = output ? outName : juce::String();
-    log.add ("Connected: " + inName + (output ? " / " + outName : juce::String (" (no lights: output not found)")));
-    if (userChoice) { juce::XmlElement x ("VegaApc"); x.setAttribute ("in", inName); x.setAttribute ("out", outName); x.writeTo (settingsFile()); }
+    inputName = in; outputName = output ? out : juce::String();
+    log.add ("Connected: " + in + (output ? " / " + out : juce::String (" (no lights: output not found)")));
+    if (userChoice) { juce::XmlElement x ("VegaApc"); x.setAttribute ("in", in); x.setAttribute ("out", out); x.writeTo (settingsFile()); }
     if (output) output->sendMessageNow (ApcSurface::introduction());
     surface.allOff();
     surface.updateFeedback (true);
@@ -224,7 +250,7 @@ void ApcHub::autoConnect (bool forceAuto)
         in = x->getStringAttribute ("in"); out = x->getStringAttribute ("out");
     }
     auto ins = juce::MidiInput::getAvailableDevices(); auto outs = juce::MidiOutput::getAvailableDevices();
-    bool hasIn = false; for (auto& d : ins) if (d.name == in) hasIn = true;
+    bool hasIn = false; for (auto& d : ins) if (d.name == in && isApcControlPort (d.name)) hasIn = true;   // a saved keys port is a mistake: find the control port
     if (! hasIn) { in = {}; for (auto& d : ins) if (isApcControlPort (d.name)) { in = d.name; break; } }
     if (in.isEmpty()) return;
     bool hasOut = false; for (auto& d : outs) if (d.name == out) hasOut = true;
