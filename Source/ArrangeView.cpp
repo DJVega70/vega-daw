@@ -93,7 +93,10 @@ public:
     void paint (juce::Graphics& g) override
     {
         const bool sel = owner.vs.selectedTrack == track->itemID;
-        g.setColour (juce::Colour (sel ? 0xff2a2f2f : 0xff222222)); g.fillRect (getLocalBounds().reduced (0, 1));
+        // the mixer strips' charcoal panel
+        g.setGradientFill (juce::ColourGradient (VegaColours::panelLight, 0, 0, VegaColours::panel, 0, (float) getHeight(), false));
+        g.fillRect (getLocalBounds().reduced (0, 1));
+        if (sel) { g.setColour (VegaColours::accent.withAlpha (0.06f)); g.fillRect (getLocalBounds().reduced (0, 1)); g.setColour (VegaColours::accent.withAlpha (0.5f)); g.drawRect (getLocalBounds().reduced (0, 1), 1); }
         auto& sess = owner.vs.session;
         const bool folder = DawSession::isFolder (*track);
         auto* parent = sess.folderOf (*track);
@@ -388,12 +391,16 @@ public:
         }
         // grid
         const double first = std::floor (vs.scrollBeats), last = vs.xToBeat ((float) getWidth(), 0);
+        const int sub = vs.lineDiv();
         for (double b = first; b <= last; b += 1.0)
         {
             const bool bar = vs.isBarStart (b);
             if (! bar && vs.pixelsPerBeat < 12) continue;
             g.setColour (juce::Colours::white.withAlpha (bar ? 0.09f : 0.035f));
             g.drawVerticalLine ((int) vs.beatToX (b, 0), 0, (float) std::min (getHeight(), y));
+            // the finer lines "Snap: Line" uses when zoomed in
+            g.setColour (juce::Colours::white.withAlpha (0.018f));
+            for (int k = 1; k < sub; ++k) g.drawVerticalLine ((int) vs.beatToX (b + (double) k / sub, 0), 0, (float) std::min (getHeight(), y));
         }
         // loop
         auto& tr = ed.getTransport();
@@ -1127,7 +1134,7 @@ public:
     }
     void quantise (te::MidiClip& mc)
     {
-        const int div = std::max (1, vs.snapDiv);
+        const int div = std::max (1, vs.snapDivisions());
         auto* um = &vs.edit().getUndoManager(); um->beginNewTransaction ("Quantise");
         for (auto* n : mc.getSequence().getNotes())
         {

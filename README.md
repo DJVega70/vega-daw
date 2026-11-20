@@ -121,9 +121,11 @@ First run: **Options > Audio / MIDI settings** (pick ASIO / WASAPI on Windows, C
 - Non-destructive clips: move (also between tracks), trim either edge, fade in/out handles, split at playhead, duplicate (Alt-drag or Ctrl+D), mute, rename, clip gain, reverse, loop.
 - Audio clips: **Warp to project tempo** (time-stretch) and **pitch shift** ±12 semitones, **slice at transients**.
 - Drag audio (WAV/AIFF/FLAC/OGG/MP3) or MIDI files straight onto the timeline.
-- Snap to bar / beat / 1/8 / 1/16, zoom (Ctrl+wheel), loop range on the ruler, tempo and time signature, undo/redo.
+- Snap like FL Studio: **Line** (the default) snaps clips, audio included, to the grid you see, finer as you zoom in; or Bar / Beat / 1/8 / 1/16 / Off. Hold Shift while dragging to move freely. Zoom (Ctrl+wheel), loop range on the ruler, tempo and time signature, undo/redo.
 
 **Piano roll** — add / move / resize / delete notes, velocity lane, grid incl. triplets, quantise, note audition.
+
+**Floating windows** — the mixer and the piano roll each have a **DETACH** button (also in the Track menu). Detached, they float in their own window, which you can put on a second screen, and stay above the DAW while you work. **DOCK** puts them back. Closing a floating window just hides it: Tab brings the mixer back, and double-clicking a clip brings the piano roll back. The DAW remembers which views float and where.
 
 **Mixer** — channel strips with inserts (VST3/AU or built-ins: EQ, compressor, reverb, delay, chorus, phaser, filter, pitch shift), plugin bypass/re-order, **aux sends** to buses, **output routing** of tracks into buses, **sidechain inputs** for plugins that support them, pan, fader, meters, mute/solo, master.
 

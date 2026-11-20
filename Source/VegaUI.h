@@ -562,6 +562,90 @@ public:
         label.setJustificationType (juce::Justification::centred);
     }
     juce::Font getPopupMenuFont() override { return VegaFonts::ui (13.0f); }
+
+    // ------------------------------------------------------------------ menus (popup + menu bar), in the plug-ins' look
+    void drawPopupMenuBackground (juce::Graphics& g, int w, int h) override
+    {
+        g.fillAll (juce::Colour (0xff1b1b1b));
+        g.setColour (VegaColours::line); g.drawRect (0, 0, w, h, 1);
+        g.setColour (VegaColours::accent.withAlpha (0.6f)); g.fillRect (1, 1, w - 2, 1);      // thin cyan top edge, like the plug-in headers
+    }
+    int getPopupMenuBorderSize() override { return 4; }
+    void drawPopupMenuItem (juce::Graphics& g, const juce::Rectangle<int>& area, bool isSeparator, bool isActive, bool isHighlighted,
+                            bool isTicked, bool hasSubMenu, const juce::String& text, const juce::String& shortcutKeyText,
+                            const juce::Drawable* icon, const juce::Colour* textColourToUse) override
+    {
+        if (isSeparator)
+        {
+            g.setColour (VegaColours::line);
+            g.fillRect (area.reduced (8, 0).withHeight (1).withY (area.getCentreY()));
+            return;
+        }
+        auto r = area.reduced (3, 0);
+        if (isHighlighted && isActive)
+        {
+            g.setColour (VegaColours::accent.withAlpha (0.14f)); g.fillRoundedRectangle (r.toFloat(), 2.0f);
+            g.setColour (VegaColours::accent); g.fillRect (r.getX(), r.getY() + 3, 2, r.getHeight() - 6);
+        }
+        const auto ink = ! isActive ? VegaColours::textDim.withAlpha (0.5f)
+                       : textColourToUse != nullptr ? *textColourToUse
+                       : isHighlighted ? juce::Colours::white : VegaColours::text;
+        auto iconArea = r.removeFromLeft (22).toFloat();
+        if (isTicked)
+        {   // a small lit square, like the plug-ins' buttons
+            auto sq = juce::Rectangle<float> (9.0f, 9.0f).withCentre (iconArea.getCentre());
+            g.setColour (VegaColours::accent.withAlpha (0.3f)); g.fillRect (sq.expanded (2.0f));
+            g.setColour (VegaColours::accent); g.fillRect (sq);
+        }
+        else if (icon != nullptr)
+            icon->drawWithin (g, iconArea.reduced (4.0f), juce::RectanglePlacement::centred, 1.0f);
+        g.setColour (ink); g.setFont (getPopupMenuFont());
+        if (hasSubMenu)
+        {
+            auto ar = r.removeFromRight (14).toFloat();
+            juce::Path p; const auto c = ar.getCentre();
+            p.startNewSubPath (c.x - 2.0f, c.y - 4.0f); p.lineTo (c.x + 2.5f, c.y); p.lineTo (c.x - 2.0f, c.y + 4.0f);
+            g.strokePath (p, juce::PathStrokeType (1.4f));
+        }
+        r.removeFromRight (6);
+        if (shortcutKeyText.isNotEmpty())
+        {
+            g.setColour (VegaColours::textDim); g.setFont (VegaFonts::mono (11.0f));
+            g.drawText (shortcutKeyText, r, juce::Justification::centredRight);
+            g.setColour (ink); g.setFont (getPopupMenuFont());
+        }
+        g.drawFittedText (text, r, juce::Justification::centredLeft, 1);
+    }
+    void drawPopupMenuSectionHeader (juce::Graphics& g, const juce::Rectangle<int>& area, const juce::String& name) override
+    {
+        g.setFont (VegaFonts::ui (10.0f, true)); g.setColour (VegaColours::accent.withAlpha (0.8f));
+        g.drawText (name.toUpperCase(), area.reduced (10, 0), juce::Justification::bottomLeft);
+    }
+    void getIdealPopupMenuItemSize (const juce::String& text, bool isSeparator, int standardMenuItemHeight, int& idealWidth, int& idealHeight) override
+    {
+        if (isSeparator) { idealWidth = 50; idealHeight = 9; return; }
+        juce::LookAndFeel_V4::getIdealPopupMenuItemSize (text, false, standardMenuItemHeight, idealWidth, idealHeight);
+        idealHeight = std::max (idealHeight, 24);
+        idealWidth += 18;
+    }
+    juce::Font getMenuBarFont (juce::MenuBarComponent&, int, const juce::String&) override { return VegaFonts::ui (13.5f); }
+    int getMenuBarItemWidth (juce::MenuBarComponent& mb, int index, const juce::String& t) override
+    {
+        return juce::GlyphArrangement::getStringWidthInt (getMenuBarFont (mb, index, t), t) + 22;
+    }
+    void drawMenuBarBackground (juce::Graphics&, int, int, bool, juce::MenuBarComponent&) override {}
+    void drawMenuBarItem (juce::Graphics& g, int w, int h, int, const juce::String& text, bool isMouseOver, bool isMenuOpen,
+                          bool, juce::MenuBarComponent& mb) override
+    {
+        if (isMenuOpen || isMouseOver)
+        {
+            g.setColour (VegaColours::accent.withAlpha (isMenuOpen ? 0.16f : 0.08f)); g.fillRoundedRectangle (1.0f, 1.0f, w - 2.0f, h - 2.0f, 2.0f);
+            if (isMenuOpen) { g.setColour (VegaColours::accent); g.fillRect (4, h - 2, w - 8, 2); }
+        }
+        g.setColour (isMenuOpen ? VegaColours::accent : VegaColours::text);
+        g.setFont (getMenuBarFont (mb, 0, text));
+        g.drawText (text, 0, 0, w, h, juce::Justification::centred);
+    }
 };
 
 

@@ -27,6 +27,9 @@ PianoRoll::PianoRoll (ViewState& v) : vs (v)
     addAndMakeVisible (title);
     addChildComponent (stepEditor);
     stepEditor.onClose = [this] { if (onClose) onClose(); };
+    setDetached (false);
+    detachBtn.onClick = [this] { if (onDetach) onDetach(); };
+    addAndMakeVisible (detachBtn);
     setWantsKeyboardFocus (true);
     startTimerHz (25);
 }
@@ -47,6 +50,7 @@ void PianoRoll::resized()
     closeBtn.setBounds (getWidth() - 76, 5, 70, 22); clearBtn.setBounds (getWidth() - 152, 5, 70, 22);
     quantBtn.setBounds (getWidth() - 248, 5, 90, 22); gridBox.setBounds (getWidth() - 360, 5, 106, 22);
     laneBox.setBounds (getWidth() - 520, 5, 152, 22);
+    detachBtn.setBounds (getWidth() - 600, 5, 74, 22);
     stepEditor.setBounds (getLocalBounds());
 }
 

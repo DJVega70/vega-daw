@@ -1101,7 +1101,7 @@ private:
         {
             if (auto* c = vs.getSelectedClip())
             {
-                const double grid = vs.snapDiv > 0 ? 1.0 / vs.snapDiv : 1.0;
+                const double grid = vs.gridBeats();
                 c->setStart (vs.beatsToTime (std::max (0.0, vs.timeToBeats (c->getPosition().getStart()) + dir * grid)), false, true);
                 owner.touched ("Nudge " + c->getName(), dawui::formatBarsBeats (vs.edit(), c->getPosition().getStart()));
             }
@@ -1349,6 +1349,9 @@ MixerView::MixerView (ViewState& v) : vs (v)
     viewport.setScrollBarsShown (false, true);
     viewport.setScrollBarThickness (8);
     addAndMakeVisible (viewport);
+    setDetached (false);
+    detachBtn.onClick = [this] { if (onDetach) onDetach(); };
+    addAndMakeVisible (detachBtn);
     rebuild();
     startTimerHz (25);
 }
@@ -1366,7 +1369,10 @@ void MixerView::rebuild()
 
 void MixerView::resized()
 {
-    auto r = getLocalBounds().reduced (10, 8);
+    auto r = getLocalBounds();
+    auto header = r.removeFromTop (headerH);
+    detachBtn.setBounds (header.removeFromRight (90).reduced (6, 4));
+    r = r.reduced (10, 6);
     const int h = r.getHeight() - 10;
     panel->setBounds (r.removeFromLeft (panel->widthForHeight (h)).withHeight (h));
     r.removeFromLeft (6);
@@ -1385,6 +1391,15 @@ void MixerView::resized()
 void MixerView::paint (juce::Graphics& g)
 {
     g.fillAll (VegaColours::background);
+    {   // header bar, like the plug-ins' title bars
+        auto hb = getLocalBounds().removeFromTop (headerH);
+        g.setColour (VegaColours::bar); g.fillRect (hb);
+        g.setColour (VegaColours::line); g.drawHorizontalLine (hb.getBottom() - 1, 0, (float) getWidth());
+        g.setColour (VegaColours::text); g.setFont (VegaFonts::ui (13.0f, true));
+        g.drawText ("MIXER", hb.withTrimmedLeft (14), juce::Justification::centredLeft);
+        g.setColour (VegaColours::textDim); g.setFont (VegaFonts::ui (10.5f));
+        g.drawText ("Tab shows / hides the mixer", hb.withTrimmedLeft (74), juce::Justification::centredLeft);
+    }
     if (master != nullptr)
     {   // divider before the master
         g.setColour (VegaColours::line); g.fillRect (master->getX() - 6, master->getY(), 1, master->getHeight());

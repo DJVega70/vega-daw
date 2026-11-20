@@ -155,6 +155,21 @@ int main()
         sent.clear(); hui.updateFeedback();
         check (sent.empty(), "HUI feedback only sends changes (" + juce::String ((int) sent.size()) + " msgs when idle)");
     }
+    {   // FL-style snapping: "Line" follows the zoom, Bar snaps to whole bars (it used to switch snapping off)
+        DawSession d (engine);
+        ViewState v (d);
+        v.snapMode = ViewState::Snap::bar;
+        check (std::abs (v.snapBeat (5.2) - 4.0) < 1e-6 && std::abs (v.snapBeat (6.4) - 8.0) < 1e-6, "Snap: Bar snaps to whole bars (5.2 -> " + juce::String (v.snapBeat (5.2)) + ")");
+        v.snapMode = ViewState::Snap::line;
+        v.pixelsPerBeat = 60;  const double fine = v.snapBeat (1.13);
+        v.pixelsPerBeat = 28;  const double mid = v.snapBeat (1.13);
+        v.pixelsPerBeat = 6;   const double coarse = v.snapBeat (1.13);
+        check (std::abs (fine - 1.25) < 1e-6 && std::abs (mid - 1.0) < 1e-6 && std::abs (coarse - 0.0) < 1e-6,
+               "Snap: Line follows the zoom (1/16 zoomed in, 1/8, then bars zoomed out: " + juce::String (fine) + ", " + juce::String (mid) + ", " + juce::String (coarse) + ")");
+        check (std::abs (v.snapBeat (1.13, true) - 1.13) < 1e-9, "Shift moves freely");
+        v.snapMode = ViewState::Snap::off;
+        check (std::abs (v.snapBeat (1.13) - 1.13) < 1e-9, "Snap: Off");
+    }
     {   // DJ EQ / filter on every channel
         DawSession d (engine);
         auto tone = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_dj_tones.wav");

@@ -27,7 +27,12 @@ public:
     void scrollStrips (int n);
     void selectNeighbour (int dir);
     void layoutChanged() { resized(); }
+    /** DETACH / DOCK: the mixer can float in its own window */
+    std::function<void()> onDetach;
+    void setDetached (bool d) { detachBtn.setButtonText (d ? "DOCK" : "DETACH"); detachBtn.setTooltip (d ? "Put the mixer back in the main window" : "Float the mixer in its own window (e.g. on a second screen)"); }
 private:
+    juce::TextButton detachBtn;
+    static constexpr int headerH = 30;
     void timerCallback() override;
     ViewState& vs;
     juce::Viewport viewport; juce::Component content;

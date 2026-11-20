@@ -48,15 +48,15 @@ public:
         sig.addItemList ({ "4/4", "3/4", "6/8", "7/8", "5/4" }, 1);
         sig.onChange = [this] { const int n[] { 4, 3, 6, 7, 5 }, d[] { 4, 4, 8, 8, 4 }; const int i = sig.getSelectedItemIndex(); if (i >= 0) vs.session.setTimeSig (n[i], d[i]); };
         addAndMakeVisible (sig);
-        snap.addItemList ({ "Snap: Bar", "Snap: Beat", "Snap: 1/8", "Snap: 1/16", "Snap: Off" }, 1);
-        snap.setSelectedItemIndex (1, juce::dontSendNotification);
-        snap.onChange = [this] { const int d[] { -1, 1, 2, 4, 0 }; const int i = snap.getSelectedItemIndex(); vs.snapDiv = d[i] == -1 ? 0 : d[i]; barSnap = d[i] == -1; };
+        snap.addItemList ({ "Snap: Line", "Snap: Bar", "Snap: Beat", "Snap: 1/8", "Snap: 1/16", "Snap: Off" }, 1);
+        snap.setSelectedItemIndex (0, juce::dontSendNotification);
+        snap.setTooltip ("Line follows the grid you see (finer as you zoom in), like FL Studio. Hold Shift while dragging to move freely.");
+        snap.onChange = [this] { const int i = snap.getSelectedItemIndex(); if (i >= 0) vs.snapMode = (ViewState::Snap) i; };
         addAndMakeVisible (snap);
         startTimerHz (20);
     }
     std::function<void()> onToggleView, onToggleBrowser, onToggleSession;
     void setBrowserShown (bool b) { browse.setToggleState (b, juce::dontSendNotification); }
-    bool barSnap = false;
     void paint (juce::Graphics& g) override
     {
         g.fillAll (juce::Colour (0xff1c1c1c));
@@ -122,7 +122,6 @@ private:
         const bool learning = vs.edit().engine.getMidiLearnState().isActive();
         if (learn.getToggleState() != learning) { learn.setToggleState (learning, juce::dontSendNotification); repaint(); }
         if (! tempo.isMouseButtonDown() && ! tempo.hasKeyboardFocus (true)) tempo.setValue (vs.session.getTempo(), juce::dontSendNotification);
-        if (barSnap) vs.snapDiv = 0;
         repaint (display); repaint (cpuArea);
     }
     ViewState& vs;
@@ -138,11 +137,12 @@ public:
     MainComponent (te::Engine& e) : engine (e), session (e), vs (session), hub (e, session), apc (e, session), transport (vs), arrange (vs), mixer (vs), launcher (vs), pianoRoll (vs), browser (vs)
     {
         setLookAndFeel (&lnf);
+        juce::LookAndFeel::setDefaultLookAndFeel (&lnf);     // menus, dialogs and floating windows get the plug-ins' look too
         session.edit().getAutomationRecordManager().setWritingAutomation (false);
         menuBar.setModel (this);
         addAndMakeVisible (menuBar); addAndMakeVisible (transport); addAndMakeVisible (arrange);
         addChildComponent (mixer); addChildComponent (launcher); addChildComponent (pianoRoll); addChildComponent (divider);
-        transport.onToggleView = [this] { showMixer (! mixer.isVisible()); };
+        transport.onToggleView = [this] { showMixer (! mixerShown()); };
         transport.onToggleSession = [this] { showSession (! launcher.isVisible()); };
         vs.onShowSession = [this] { showSession (true); };
         vs.onShowSongMap = [this] { showSongMap(); };
@@ -179,6 +179,9 @@ public:
         hub.autoConnect();
         juce::Timer::callAfterDelay (1200, [sp = juce::Component::SafePointer<MainComponent> (this)] { if (sp != nullptr) sp->autoDetectMcu(); });
         pianoRoll.onClose = [this] { showPianoRoll (false); };
+        pianoRoll.onDetach = [this] { setPianoFloating (! pianoFloat); };
+        mixer.onDetach = [this] { setMixerFloating (! mixerFloat); };
+        juce::MessageManager::callAsync ([sp = juce::Component::SafePointer<MainComponent> (this)] { if (sp != nullptr) sp->loadUi(); });
         session.onBeforeEditChange = [this] { engine.getExternalControllerManager().detachFromEdit (&session.edit()); arrange.clearAll(); mixer.clearAll(); };
         session.onEditChanged = [this] { arrange.editChanged(); mixer.rebuild(); launcher.editChanged(); hub.editChanged(); apc.editChanged(); transport.refreshFromEdit(); setupInputs(); showPianoRoll (false); updateTitle(); };
         divider.onDrag = [this] (int dy) { pianoH = juce::jlimit (160, getHeight() - 240, pianoH - dy); resized(); };
@@ -189,7 +192,7 @@ public:
         startTimerHz (2);
         juce::Timer::callAfterDelay (900, [sp = juce::Component::SafePointer<MainComponent> (this)] { if (sp != nullptr) sp->offerRecovery(); });
     }
-    ~MainComponent() override { engine.getExternalControllerManager().detachFromEdit (&session.edit()); menuBar.setModel (nullptr); mixer.clearAll(); setLookAndFeel (nullptr); }
+    ~MainComponent() override { saveUi(); mixerWin.reset(); pianoWin.reset(); engine.getExternalControllerManager().detachFromEdit (&session.edit()); menuBar.setModel (nullptr); mixer.clearAll(); setLookAndFeel (nullptr); juce::LookAndFeel::setDefaultLookAndFeel (nullptr); }
 
     DawSession& getSession() { return session; }
     std::function<void (juce::String)> onTitle;
@@ -211,13 +214,13 @@ public:
         auto top = r.removeFromTop (34);
         menuBar.setBounds (top.withTrimmedLeft (240).withWidth (360).reduced (0, 5));
         transport.setBounds (r.removeFromTop (52));
-        if (pianoRoll.isVisible())
+        if (! pianoFloat && pianoRoll.isVisible())
         {
             pianoRoll.setBounds (r.removeFromBottom (pianoH));
             divider.setBounds (r.removeFromBottom (6));
         }
         if (browser.isVisible()) browser.setBounds (r.removeFromLeft (browserW));
-        arrange.setBounds (r); mixer.setBounds (r); launcher.setBounds (r);
+        arrange.setBounds (r); launcher.setBounds (r); if (! mixerFloat) mixer.setBounds (r);
     }
     bool keyPressed (const juce::KeyPress& k) override
     {
@@ -227,7 +230,7 @@ public:
         if (k.getKeyCode() == 'R' && k.getModifiers().isAnyModifierKeyDown() == false) { if (tr.isRecording()) tr.stop (true, false); else tr.record (false); return true; }
         if (k.getKeyCode() == 'L' && ! k.getModifiers().isAnyModifierKeyDown()) { tr.looping = ! tr.looping.get(); return true; }
         if (k == juce::KeyPress (juce::KeyPress::tabKey, juce::ModifierKeys::shiftModifier, 0)) { showSession (! launcher.isVisible()); return true; }
-        if (k == juce::KeyPress (juce::KeyPress::tabKey)) { showMixer (! mixer.isVisible()); return true; }
+        if (k == juce::KeyPress (juce::KeyPress::tabKey)) { showMixer (! mixerShown()); return true; }
         if (k.getKeyCode() == 'M' && ! k.getModifiers().isAnyModifierKeyDown()) { session.edit().getUndoManager().beginNewTransaction ("Add marker"); session.addMarker (tr.getPosition()); return true; }
         if (k.getKeyCode() == 'B' && ! k.getModifiers().isAnyModifierKeyDown()) { showBrowser (! browser.isVisible()); return true; }
         if (k == juce::KeyPress ('z', cmd, 0)) { session.edit().getUndoManager().undo(); return true; }
@@ -270,8 +273,10 @@ public:
             m.addItem (27, "Bounce selected track in place", vs.getSelectedTrack() != nullptr && DawSession::kindOf (*vs.getSelectedTrack()) != DawSession::TrackKind::bus);
             m.addItem (19, "Consolidate clips on selected track", vs.getSelectedTrack() != nullptr && DawSession::kindOf (*vs.getSelectedTrack()) != DawSession::TrackKind::bus);
             m.addSeparator();
-            m.addItem (34, "Show mixer   Tab", true, mixer.isVisible()); m.addItem (48, "Show clip launcher   Shift+Tab", true, launcher.isVisible());
-            m.addItem (35, "Show piano roll", true, pianoRoll.isVisible());
+            m.addItem (34, "Show mixer   Tab", true, mixerShown()); m.addItem (48, "Show clip launcher   Shift+Tab", true, launcher.isVisible());
+            m.addItem (35, "Show piano roll", true, pianoShown());
+            m.addItem (136, "Float the mixer in its own window", true, mixerFloat);
+            m.addItem (137, "Float the piano roll in its own window", true, pianoFloat);
             m.addItem (36, "Show plug-in browser   B", true, browser.isVisible());
             m.addItem (39, "Routing matrix...");
             m.addSeparator();
@@ -332,8 +337,10 @@ public:
             case 31: session.addTrack (DawSession::TrackKind::midi); break;
             case 32: session.addTrack (DawSession::TrackKind::bus); break;
             case 33: if (auto* t = vs.getSelectedTrack()) session.deleteTrack (*t); break;
-            case 34: showMixer (! mixer.isVisible()); break;
-            case 35: showPianoRoll (! pianoRoll.isVisible()); break;
+            case 34: showMixer (! mixerShown()); break;
+            case 35: showPianoRoll (! pianoShown()); break;
+            case 136: setMixerFloating (! mixerFloat); break;
+            case 137: setPianoFloating (! pianoFloat); break;
             case 40: showAudioSettings(); break;
             case 41: showBrowser (true); browser.startScan (false); break;
             case 45: showPluginList(); break;
@@ -421,8 +428,120 @@ private:
         const auto f = session.getProjectFile();
         if (onTitle) onTitle ((f == juce::File() ? juce::String ("Untitled") : f.getFileNameWithoutExtension()) + (session.hasUnsavedChanges() ? " *" : "") + "  -  Vega Productions DAW");
     }
-    void showMixer (bool m) { mixer.setVisible (m); launcher.setVisible (false); arrange.setVisible (! m); transport.setViewLabel (m, false); if (m) mixer.rebuild(); }
-    void showSession (bool on) { launcher.setVisible (on); mixer.setVisible (false); arrange.setVisible (! on); transport.setViewLabel (false, on); if (on) launcher.grabKeyboardFocus(); }
+    void showMixer (bool m)
+    {
+        if (mixerFloat)
+        {   // floating: Tab / MIXER show and hide its window
+            if (mixerWin == nullptr) return;
+            if (m) { mixerWin->setVisible (true); mixerWin->toFront (true); mixer.rebuild(); }
+            else mixerWin->setVisible (false);
+            transport.setViewLabel (false, launcher.isVisible());
+            return;
+        }
+        mixer.setVisible (m); launcher.setVisible (false); arrange.setVisible (! m); transport.setViewLabel (m, false); if (m) mixer.rebuild();
+    }
+    void showSession (bool on) { launcher.setVisible (on); if (! mixerFloat) mixer.setVisible (false); arrange.setVisible (! on); transport.setViewLabel (false, on); if (on) launcher.grabKeyboardFocus(); }
+    bool mixerShown() const { return mixerFloat ? (mixerWin != nullptr && mixerWin->isVisible()) : mixer.isVisible(); }
+    bool pianoShown() const { return pianoFloat ? (pianoWin != nullptr && pianoWin->isVisible()) : pianoRoll.isVisible(); }
+
+    // ---------------------------------------------------------------- floating mixer / piano roll (like FL Studio)
+    /** A view in its own window: stays above the DAW while it's in use, passes keys (space, R, Tab...) to the DAW */
+    struct FloatWindow : public juce::DocumentWindow, private juce::Timer
+    {
+        FloatWindow (const juce::String& title, juce::Component& c, juce::Rectangle<int> b, juce::Point<int> defaultSize, bool show)
+            : DocumentWindow (title, VegaColours::background, DocumentWindow::closeButton | DocumentWindow::minimiseButton | DocumentWindow::maximiseButton)
+        {
+            setUsingNativeTitleBar (true);
+            setContentNonOwned (&c, false);
+            setResizable (true, false); setResizeLimits (520, 260, 10000, 10000);
+            const auto screen = juce::Desktop::getInstance().getDisplays().getTotalBounds (true);
+            if (! b.isEmpty() && screen.intersects (b)) setBounds (b); else centreWithSize (defaultSize.x, defaultSize.y);
+            c.setVisible (true);
+            setVisible (show);
+            startTimer (300);
+        }
+        ~FloatWindow() override { clearContentComponent(); }
+        std::function<void()> onCloseButton;
+        std::function<bool (const juce::KeyPress&)> onKey;
+        void closeButtonPressed() override { if (onCloseButton) onCloseButton(); }
+        bool keyPressed (const juce::KeyPress& k) override { return onKey != nullptr && onKey (k); }
+        void timerCallback() override
+        {   // on top of the DAW while it's the app in use; not on top of other apps
+            const bool fg = juce::Process::isForegroundProcess();
+            if (isAlwaysOnTop() != fg) setAlwaysOnTop (fg);
+        }
+    };
+    std::unique_ptr<FloatWindow> mixerWin, pianoWin;
+    bool mixerFloat = false, pianoFloat = false;
+    juce::Rectangle<int> mixerWinBounds, pianoWinBounds;
+    static juce::File uiFile() { return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("Vega Productions DAW").getChildFile ("windows.xml"); }
+    void saveUi()
+    {
+        if (mixerWin != nullptr) mixerWinBounds = mixerWin->getBounds();
+        if (pianoWin != nullptr) pianoWinBounds = pianoWin->getBounds();
+        juce::XmlElement x ("VegaWindows");
+        x.setAttribute ("mixerFloat", mixerFloat); x.setAttribute ("pianoFloat", pianoFloat);
+        x.setAttribute ("mixerBounds", mixerWinBounds.toString()); x.setAttribute ("pianoBounds", pianoWinBounds.toString());
+        uiFile().getParentDirectory().createDirectory();
+        x.writeTo (uiFile());
+    }
+    void loadUi()
+    {
+        if (auto x = juce::XmlDocument::parse (uiFile()))
+        {
+            mixerWinBounds = juce::Rectangle<int>::fromString (x->getStringAttribute ("mixerBounds"));
+            pianoWinBounds = juce::Rectangle<int>::fromString (x->getStringAttribute ("pianoBounds"));
+            if (x->getBoolAttribute ("pianoFloat")) setPianoFloating (true, false);
+            if (x->getBoolAttribute ("mixerFloat")) setMixerFloating (true, false);
+        }
+    }
+    void setMixerFloating (bool f, bool showNow = true)
+    {
+        if (f == mixerFloat) return;
+        if (f)
+        {
+            const bool was = mixer.isVisible();
+            mixer.setVisible (false); arrange.setVisible (! launcher.isVisible()); transport.setViewLabel (false, launcher.isVisible());
+            removeChildComponent (&mixer);
+            mixerFloat = true; mixer.setDetached (true);
+            mixerWin = std::make_unique<FloatWindow> ("Vega Productions - Mixer", mixer, mixerWinBounds, juce::Point<int> (1500, 860), showNow || was);
+            mixerWin->onCloseButton = [this] { showMixer (false); };
+            mixerWin->onKey = [this] (const juce::KeyPress& k) { return keyPressed (k); };
+            mixer.rebuild();
+        }
+        else
+        {
+            if (mixerWin != nullptr) { mixerWinBounds = mixerWin->getBounds(); mixerWin.reset(); }
+            mixerFloat = false; mixer.setDetached (false);
+            addChildComponent (mixer);
+            resized();
+            showMixer (showNow);
+        }
+        saveUi();
+    }
+    void setPianoFloating (bool f, bool showNow = true)
+    {
+        if (f == pianoFloat) return;
+        const bool shown = pianoShown();
+        if (f)
+        {
+            pianoRoll.setVisible (false); divider.setVisible (false);
+            removeChildComponent (&pianoRoll);
+            pianoFloat = true; pianoRoll.setDetached (true);
+            pianoWin = std::make_unique<FloatWindow> ("Vega Productions - Piano Roll", pianoRoll, pianoWinBounds, juce::Point<int> (1200, 640), showNow && shown);
+            pianoWin->onCloseButton = [this] { showPianoRoll (false); };
+            pianoWin->onKey = [this] (const juce::KeyPress& k) { return keyPressed (k); };
+            resized();
+        }
+        else
+        {
+            if (pianoWin != nullptr) { pianoWinBounds = pianoWin->getBounds(); pianoWin.reset(); }
+            pianoFloat = false; pianoRoll.setDetached (false);
+            addChildComponent (pianoRoll);
+            showPianoRoll (showNow && shown);
+        }
+        saveUi();
+    }
 
     // ---------------------------------------------------------------- export / bounce / markers
     void showExport (bool stems)
@@ -828,7 +947,17 @@ private:
         dawui::openPlugin (p.get());
     }
 
-    void showPianoRoll (bool show) { pianoRoll.setVisible (show); divider.setVisible (show); resized(); if (show) pianoRoll.grabKeyboardFocus(); }
+    void showPianoRoll (bool show)
+    {
+        if (pianoFloat)
+        {
+            if (pianoWin == nullptr) return;
+            if (show) { pianoWin->setVisible (true); pianoWin->toFront (true); pianoRoll.grabKeyboardFocus(); }
+            else pianoWin->setVisible (false);
+            return;
+        }
+        pianoRoll.setVisible (show); divider.setVisible (show); resized(); if (show) pianoRoll.grabKeyboardFocus();
+    }
 
     void setupInputs()
     {
@@ -932,7 +1061,7 @@ private:
     };
 
     te::Engine& engine;
-    VegaLookAndFeel lnf;
+    DawLookAndFeel lnf;
     DawSession session; te::SelectionManager selection { engine }; ViewState vs; ControllerHub hub; ApcHub apc;
     juce::MenuBarComponent menuBar;
     TransportBar transport; ArrangeView arrange; MixerView mixer; SessionView launcher; PianoRoll pianoRoll; PluginBrowser browser; Divider divider;

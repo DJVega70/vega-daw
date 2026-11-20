@@ -16,12 +16,14 @@ public:
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     bool keyPressed (const juce::KeyPress&) override;
-    std::function<void()> onClose;
+    std::function<void()> onClose, onDetach;
+    void setDetached (bool d) { detachBtn.setButtonText (d ? "DOCK" : "DETACH"); detachBtn.setTooltip (d ? "Put the piano roll back under the arrangement" : "Float the piano roll in its own window, like FL Studio"); }
 private:
+    juce::TextButton detachBtn;
     void timerCallback() override
     {   // a step clip is edited in the step sequencer instead
         const bool step = dynamic_cast<te::StepClip*> (vs.getSelectedClip()) != nullptr;
-        if (stepEditor.isVisible() != step) { stepEditor.setVisible (step); if (step) stepEditor.toFront (false); }
+        if (stepEditor.isVisible() != step) { stepEditor.setVisible (step); if (step) { stepEditor.toFront (false); detachBtn.toFront (false); } }
         if (! step) repaint();
     }
     te::MidiClip* clip();

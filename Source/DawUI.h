@@ -2,13 +2,59 @@
 #include "DawSession.h"
 #include "VegaUI.h"
 
+/** The DAW's look: the plug-ins' look-and-feel, with text buttons drawn as the mixer's console keys
+    (dark bezel, grey face, lit in the button's "on" colour) so every view matches the mixer. */
+struct DawLookAndFeel : public VegaLookAndFeel
+{
+    static juce::Colour litFor (juce::Button& b)
+    {
+        if (! b.isColourSpecified (juce::TextButton::buttonOnColourId)) return VegaColours::accent;
+        const auto c = b.findColour (juce::TextButton::buttonOnColourId);
+        return c == VegaColours::accentDim ? VegaColours::accent : c;
+    }
+    void drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour& bg, bool over, bool down) override
+    {
+        if (b.getProperties()["flat"]) { VegaLookAndFeel::drawButtonBackground (g, b, bg, over, down); return; }
+        vegapaint::key (g, b.getLocalBounds().toFloat().reduced (1.0f), b.getToggleState(), over, down, litFor (b));
+    }
+    void drawButtonText (juce::Graphics& g, juce::TextButton& b, bool, bool) override
+    {
+        const bool on = b.getToggleState();
+        auto ink = on ? vegapaint::keyInk (true) : b.isColourSpecified (juce::TextButton::textColourOffId) ? b.findColour (juce::TextButton::textColourOffId) : VegaColours::text;
+        if (! b.isEnabled()) ink = ink.withAlpha (0.4f);
+        g.setColour (ink);
+        g.setFont (getTextButtonFont (b, b.getHeight()));
+        g.drawFittedText (b.getButtonText(), b.getLocalBounds().reduced (4, 2), juce::Justification::centred, 1, 0.7f);
+    }
+};
+
 /** Shared view state for the arrange window, piano roll and mixer */
 struct ViewState
 {
     explicit ViewState (DawSession& s) : session (s) {}
     DawSession& session;
     double pixelsPerBeat = 28.0, scrollBeats = 0.0;
-    int scrollY = 0, snapDiv = 4;                     // grid divisions per beat (0 = off)
+    int scrollY = 0;
+    /** Snap like FL Studio's playlist: "Line" follows the visible grid (it gets finer as you zoom in),
+        or a fixed Bar / Beat / 1/8 / 1/16, or Off. Hold Shift (or Alt in FL) to move freely. */
+    enum class Snap { line, bar, beat, eighth, sixteenth, off };
+    Snap snapMode = Snap::line;
+    /** Divisions per beat of the visible grid: 4 = 1/16, 2 = 1/8, 1 = beats, 0 = bars only */
+    int lineDiv() const { return pixelsPerBeat >= 48 ? 4 : pixelsPerBeat >= 24 ? 2 : pixelsPerBeat >= 12 ? 1 : 0; }
+    /** Divisions per beat the snap uses right now (0 = whole bars or off) */
+    int snapDivisions() const
+    {
+        switch (snapMode)
+        {
+            case Snap::line: return lineDiv();
+            case Snap::beat: return 1;
+            case Snap::eighth: return 2;
+            case Snap::sixteenth: return 4;
+            default: return 0;
+        }
+    }
+    /** Grid step in beats for nudging / quantising (a bar counts as 4 beats here) */
+    double gridBeats() const { const int d = snapDivisions(); return d > 0 ? 1.0 / d : 4.0; }
     te::EditItemID selectedClip, selectedTrack;
     bool followPlayhead = true;
     std::function<void()> onSelectionChanged, onOpenPianoRoll, onShowSession, onShowSongMap;
@@ -22,7 +68,18 @@ struct ViewState
     te::TimePosition beatsToTime (double b) { return tempo().toTime (te::BeatPosition::fromBeats (b)); }
     float beatToX (double beat, int x0) const { return (float) (x0 + (beat - scrollBeats) * pixelsPerBeat); }
     double xToBeat (float x, int x0) const { return scrollBeats + (x - x0) / pixelsPerBeat; }
-    double snapBeat (double b, bool bypass = false) const { return (snapDiv <= 0 || bypass) ? b : std::round (b * snapDiv) / snapDiv; }
+    double snapBeat (double b, bool bypass = false)
+    {
+        if (bypass || snapMode == Snap::off) return b;
+        const int d = snapDivisions();
+        if (d > 0) return std::round (b * d) / d;
+        // whole bars (following time-signature changes)
+        auto& ts = tempo();
+        const auto bb = ts.toBarsAndBeats (beatsToTime (std::max (0.0, b)));
+        const double s = ts.toBeats (tracktion::tempo::BarsAndBeats { bb.bars, {} }).inBeats();
+        const double e = ts.toBeats (tracktion::tempo::BarsAndBeats { bb.bars + 1, {} }).inBeats();
+        return b - s <= e - b ? s : e;
+    }
     /** Bar lines follow time-signature changes: is this (whole) beat the first beat of a bar? */
     bool isBarStart (double beat) { return tempo().toBarsAndBeats (beatsToTime (beat + 1.0e-4)).beats.inBeats() < 2.0e-4 + 1.0e-6; }
     int barNumber (double beat) { return tempo().toBarsAndBeats (beatsToTime (beat + 1.0e-4)).bars + 1; }
