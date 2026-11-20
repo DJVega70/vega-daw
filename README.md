@@ -13,16 +13,18 @@ A digital audio workstation for the Vega Productions suite — built on the open
 
 First run: **Options > Audio / MIDI settings** (pick ASIO / WASAPI on Windows, CoreAudio on Mac, and enable your MIDI keyboard), then open the **PLUGINS** panel (button at the top right, or press **B**). The DAW scans your standard VST3 folder (and AU on Mac) by itself on first launch and picks up newly installed plug-ins every time it starts. Use **FOLDERS** if you keep .vst3 files somewhere else.
 
-**Mixer (Tab)**, styled after a Launch Control XL, with a DJ section on every channel:
-- **HI / MID / LOW** (pink / blue / green) is a 3-band isolator EQ.
+**Mixer (Tab)**, a console in the Vega plug-ins' look (same knobs, square buttons, faders and LED meters). Each channel strip, top to bottom:
+- **Input**: what the track records and plays live.
+- **Console**: a VU meter plus the DJ section's **HI / MID / LO** isolator EQ.
   - The crossovers are at 250 Hz and 2.5 kHz.
-  - 12 o'clock is flat, the top of each knob is +6 dB, and turning a knob fully left **kills** that band.
-  - The LED goes dark when a band is killed.
-- **FILTER** (orange) is a one-knob DJ filter.
-  - Turn it left for low-pass and right for high-pass. The centre is off.
-  - The LED lights, and the readout shows the cutoff, while it's engaged.
-  - Double-click any knob to reset it.
-- **Pan** is the small slider under the knobs. Sends are in the channel's edit section (press **Mode**).
+  - 12 o'clock is flat, the top of each knob is +6 dB, and turning a knob fully left **kills** that band (its label turns red).
+- **Tape**: Off, **15 ips** (warm: softer top, a little more low end) or **30 ips** (clean, a little glue). It keeps the level the same.
+- **Inserts**: each plug-in on a black display; click to open, right-click to bypass, move or remove; **+** adds one. Instrument tracks show their instrument first.
+- **Sends** to buses with a level knob, and **+ Send**.
+- **Output**: Master or a bus.
+- **READ / WRITE / OFF** automation, **PAN** and the one-knob **FILTER** (left low-pass, right high-pass, centre off).
+- **Rec**, **S** (solo) and **M** (mute), the fader with stereo LED meters, and the name with the track colour. Click the name to select the track.
+- Double-click any knob or fader to reset it. The panel's **EDIT** key hides the inserts and sends.
 - **Master section**: a full console channel strip on the master bus, in the order input → filters → EQ → gate → compressor → output.
   - **Filters:** HP (16–500 Hz, 18 dB/oct) and LP (3–22 kHz).
   - **4-band EQ** with an **EQ** in/out switch:

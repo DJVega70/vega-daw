@@ -56,22 +56,12 @@ public:
         setSliderSnapsToMousePosition (false);
         setPopupDisplayEnabled (true, true, nullptr);
     }
-    static constexpr float capW = 52.0f, capH = 26.0f;
+    static constexpr float capW = 34.0f, capH = 18.0f;
+    juce::Colour capLine = juce::Colours::white;
     void paint (juce::Graphics& g) override
     {
-        const float cx = getWidth() * 0.5f;
-        auto slotR = juce::Rectangle<float> (cx - 5.0f, 6.0f, 10.0f, getHeight() - 12.0f);
-        g.setColour (slot); g.fillRoundedRectangle (slotR, 5.0f);
-        g.setColour (juce::Colours::white.withAlpha (0.05f)); g.drawRoundedRectangle (slotR.expanded (1.0f), 5.5f, 1.0f);
-        const float y = (float) getPositionOfValue (getValue());
-        auto cap = juce::Rectangle<float> (capW, capH).withCentre ({ cx, y });
-        g.setColour (juce::Colours::black.withAlpha (0.55f)); g.fillRoundedRectangle (cap.translated (0, 5.0f).expanded (1.0f), 4.0f);
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff47474b), 0, cap.getY(), juce::Colour (0xff232326), 0, cap.getBottom(), false));
-        g.fillRoundedRectangle (cap, 4.0f);
-        g.setColour (juce::Colours::white.withAlpha (0.12f)); g.drawHorizontalLine ((int) cap.getY() + 1, cap.getX() + 4, cap.getRight() - 4);
-        g.setColour (juce::Colours::black.withAlpha (0.6f)); g.drawRoundedRectangle (cap, 4.0f, 1.0f);
-        g.setColour (juce::Colours::black.withAlpha (0.5f)); g.fillRect (cap.getX() + 3, y + 0.5f, cap.getWidth() - 6, 2.5f);
-        g.setColour (juce::Colour (0xffe6e6e6)); g.fillRect (cap.getX() + 3, y - 1.5f, cap.getWidth() - 6, 2.5f);
+        // the plug-ins' fader (ticks both sides, thin slot, dark cap with a white line)
+        vegapaint::fader (g, getLocalBounds().toFloat(), (float) getPositionOfValue (getValue()), isMouseOverOrDragging(), capW, capH, capLine);
     }
 };
 
@@ -165,34 +155,89 @@ public:
 #include "MasterSection.h"
 
 //==============================================================================
+// Channel-strip parts, drawn with the plug-ins' painters (vegapaint)
+namespace cs
+{
+/** Combo-box looking button: shows a value, opens a menu (onClick) */
+class ComboButton : public juce::Button
+{
+public:
+    ComboButton() : juce::Button ({}) {}
+    juce::Colour ink = VegaColours::textDim;
+    void paintButton (juce::Graphics& g, bool over, bool) override
+    {
+        auto r = getLocalBounds().toFloat();
+        vegapaint::comboField (g, r, over);
+        g.setColour (ink); g.setFont (VegaFonts::ui (10.5f));
+        g.drawFittedText (getButtonText(), r.withTrimmedRight (14).withTrimmedLeft (4).toNearestInt(), juce::Justification::centred, 1, 0.8f);
+    }
+};
+
+/** Insert slot drawn as the plug-ins' black display: cyan name, dim when bypassed, "+" when empty */
+class ScreenButton : public juce::Button
+{
+public:
+    explicit ScreenButton (const juce::String& t = {}) : juce::Button (t) {}
+    juce::Colour ink = VegaColours::accent; bool empty = false;
+    void paintButton (juce::Graphics& g, bool over, bool down) override
+    {
+        auto r = getLocalBounds().toFloat();
+        vegapaint::screen (g, r);
+        if (over) { g.setColour (juce::Colours::white.withAlpha (down ? 0.08f : 0.04f)); g.fillRoundedRectangle (r, 3.0f); }
+        if (empty) { g.setColour (juce::Colour (over ? 0xff8e8e8e : 0xff4a4a4a)); g.setFont (VegaFonts::ui (15.0f, true)); g.drawText ("+", r, juce::Justification::centred); return; }
+        g.setColour (ink); g.setFont (VegaFonts::mono (10.5f));
+        g.drawFittedText (getButtonText(), r.reduced (4, 0).toNearestInt(), juce::Justification::centred, 1, 0.75f);
+    }
+};
+
+/** The plug-ins' square push-button with its label underneath */
+class SqButton : public juce::Button
+{
+public:
+    SqButton (const juce::String& label, juce::Colour litColour) : juce::Button (label), lit (litColour) {}
+    juce::Colour lit;
+    void paintButton (juce::Graphics& g, bool over, bool) override
+    {
+        auto area = getLocalBounds().toFloat();
+        const float sz = std::min (area.getWidth() - 4.0f, area.getHeight() - 15.0f);
+        auto sq = juce::Rectangle<float> (sz, sz).withCentre ({ area.getCentreX(), area.getY() + sz * 0.5f + 2.0f });
+        vegapaint::squareButton (g, sq, getToggleState(), over, lit);
+        g.setColour (VegaColours::textDim); g.setFont (VegaFonts::ui (10.5f));
+        g.drawText (getButtonText(), area.withTop (sq.getBottom() + 2.0f).toNearestInt(), juce::Justification::centredTop);
+    }
+};
+} // namespace cs
+
 namespace mixlayout
 {
-constexpr int padH = 36, padGap = 10, bottom = 8, knobRowH = 68, headerH = 30, numKnobs = 4;
-inline int padY (int h, int row) { return h - bottom - padH - (1 - row) * (padH + padGap); }   // row 0 = Solo/Arm, row 1 = Mute/Select
+constexpr int title = 12, combo = 20, gap = 5, eqRow = 46, panRow = 54, sqRow = 38, nameH = 30, dbH = 18, vuH = 40;
 }
 
 //==============================================================================
 class MixerView::Strip : public juce::Component
 {
 public:
-    static constexpr int W = 124;
+    static constexpr int W = 120;
     te::AudioTrack* getTrack() const { return track.get(); }
     Strip (MixerView& o, ViewState& v, te::AudioTrack* t, int column) : owner (o), vs (v), track (t), col (column)
     {
         fader.setRange (-60.0, 6.0, 0.1); fader.setSkewFactorFromMidPoint (-10.0);
         fader.setTextValueSuffix (" dB"); fader.setDoubleClickReturnValue (true, 0.0);
-        fader.onValueChange = [this] { if (auto vp = volume()) vp->setVolumeDb ((float) fader.getValue()); touch ("Volume", juce::String (fader.getValue(), 1) + " dB"); };
+        fader.onValueChange = [this] { if (auto vp = volume()) vp->setVolumeDb ((float) fader.getValue()); touch ("Volume", juce::String (fader.getValue(), 1) + " dB"); repaint (dbArea); };
         // gestures let automation WRITE mode record these moves
         fader.onDragStart = [this] { if (auto vp = volume()) dawui::gesture (vp->volParam.get(), true); };
         fader.onDragEnd   = [this] { if (auto vp = volume()) dawui::gesture (vp->volParam.get(), false); };
+        pan.setRange (-1.0, 1.0, 0.01); pan.setDoubleClickReturnValue (true, 0.0);
+        pan.textFromValueFunction = [] (double v) { return std::abs (v) < 0.01 ? juce::String ("C") : juce::String (juce::roundToInt (std::abs (v) * 100)) + (v < 0 ? " L" : " R"); };
         pan.onDragStart = [this] { if (auto vp = volume()) dawui::gesture (vp->panParam.get(), true); };
         pan.onDragEnd   = [this] { if (auto vp = volume()) dawui::gesture (vp->panParam.get(), false); };
+        pan.onValueChange = [this] { if (auto vp = volume()) vp->setPan ((float) pan.getValue()); touch ("Pan", pan.getTextFromValue (pan.getValue())); repaint(); };
+        pan.setTooltip ("Pan (double-click to centre)");
         for (int i = 0; i < 4; ++i)
         {
             knobs[i].onDragStart = [this, i] { if (auto* d = dj()) dawui::gesture (i < 3 ? d->band[i].get() : d->filter.get(), true); };
             knobs[i].onDragEnd   = [this, i] { if (auto* d = dj()) dawui::gesture (i < 3 ? d->band[i].get() : d->filter.get(), false); };
         }
-        pan.onValueChange = [this] { if (auto vp = volume()) vp->setPan ((float) pan.getValue()); touch ("Pan", pan.getTextFromValue (pan.getValue())); };
         // HI / MID / LOW isolator knobs: 12 o'clock = 0 dB, fully left = kill
         static const char* bandName[] { "Hi", "Mid", "Low" };
         for (int i = 0; i < 3; ++i)
@@ -225,11 +270,18 @@ public:
         for (auto& k : knobs) addAndMakeVisible (k);
         if (track != nullptr)
         {
-            for (int i = 0; i < 2; ++i) { addAndMakeVisible (pads[i]); pads[i].led = xl::columnColour (col); }
-            pads[0].onClick = [this] { topPad(); };
-            pads[1].onClick = [this] { bottomPad(); };
+            rec.setTooltip ("Record arm"); solo.setTooltip ("Solo"); mute.setTooltip ("Mute");
+            rec.onClick = [this] { dawui::toggleArm (*track); owner.touched (track->getName(), dawui::isArmed (*track) ? "Armed" : "Disarmed"); };
+            solo.onClick = [this] { track->setSolo (! track->isSolo (false)); owner.touched (track->getName(), track->isSolo (false) ? "Solo On" : "Solo Off"); };
+            mute.onClick = [this] { track->setMute (! track->isMuted (false)); owner.touched (track->getName(), track->isMuted (false) ? "Muted" : "Unmuted"); };
+            for (auto* b : { &rec, &solo, &mute }) addAndMakeVisible (b);
             output.onChange = [this] { const int i = output.getSelectedItemIndex(); vs.session.routeToBus (*track, i <= 0 ? nullptr : outBuses[i - 1]); };
+            output.setTooltip ("Output");
             addAndMakeVisible (output);
+            input.onClick = [this] { inputMenu(); }; input.setTooltip ("Input: what this track records and plays live");
+            tape.onClick = [this] { tapeMenu(); }; tape.setTooltip ("Tape: Off, 15 ips (warm, softer top) or 30 ips (clean, a little glue)");
+            autoMode.onClick = [this] { automationMenu(); }; autoMode.setTooltip ("Automation: Read plays it back, Write records your moves while playing");
+            for (auto* b : { &input, &tape, &autoMode }) addAndMakeVisible (b);
             if (DawSession::kindOf (*track) == DawSession::TrackKind::midi)
             {
                 instrument.onClick = [this]
@@ -238,32 +290,30 @@ public:
                     if (first != nullptr && first->isSynth() && ! juce::ModifierKeys::currentModifiers.isPopupMenu()) dawui::openPlugin (first);
                     else chooseInstrument();
                 };
-                instrument.setTooltip ("Click to open the instrument. Use the arrow to change it.");
-                swapInst.setButtonText (juce::String::fromUTF8 ("\xe2\x96\xbe")); swapInst.setTooltip ("Change instrument");
-                swapInst.onClick = [this] { chooseInstrument(); };
-                addAndMakeVisible (instrument); addAndMakeVisible (swapInst);
+                instrument.setTooltip ("Instrument: click to open it, right-click to change it");
+                instrument.ink = VegaColours::text;
+                addAndMakeVisible (instrument);
             }
-            addFx.setButtonText ("+ FX"); addFx.onClick = [this] { chooseFx(); }; addAndMakeVisible (addFx);
-            addSend.setButtonText ("+ SEND"); addSend.onClick = [this] { chooseSend(); }; addAndMakeVisible (addSend);
-            for (auto* b : { &instrument, &swapInst, &addFx, &addSend }) styleButton (*b);
+            addFx.empty = true; addFx.setTooltip ("Add an insert"); addFx.onClick = [this] { chooseFx(); }; addAndMakeVisible (addFx);
+            addSend.setButtonText ("+ Send"); addSend.setTooltip ("Add a send to a bus"); addSend.onClick = [this] { chooseSend(); }; addAndMakeVisible (addSend);
             if (auto* lm = track->getLevelMeterPlugin()) { lm->measurer.addClient (client); measurer = &lm->measurer; }
         }
         rebuildSlots();
     }
-    ~Strip() override { if (measurer) measurer->removeClient (client); if (masterAdded && masterCtx) masterCtx->masterLevels.removeClient (client); }
+    ~Strip() override { if (measurer) measurer->removeClient (client); }
 
     te::VolumeAndPanPlugin* volume() { return track != nullptr ? track->getVolumePlugin() : vs.edit().getMasterVolumePlugin().get(); }
     juce::String name() const { return track != nullptr ? track->getName() : juce::String ("Master"); }
 
-    /** Height the edit section (instrument, inserts, extra sends, output) needs */
+    /** Height the inserts + sends sections need */
     int editNeeded() const
     {
+        using namespace mixlayout;
         if (track == nullptr) return 0;
-        int h = 6;
-        if (instrument.isVisible()) h += 26;
-        h += slots.size() * 22 + 24;          // inserts + "+ FX"
-        h += sends.size() * 28 + 24;          // extra sends + "+ SEND"
-        h += 28;                               // output
+        int h = title + 2;                                           // INSERTS
+        if (instrument.isVisible() || DawSession::kindOf (*track) == DawSession::TrackKind::midi) h += 24;
+        h += slots.size() * 24 + 24 + gap;
+        h += title + 2 + sends.size() * 26 + 22 + gap;               // SENDS
         return h;
     }
     int editH = 0;
@@ -275,10 +325,9 @@ public:
         for (auto* p : vs.session.getInsertPlugins (*track))
         {
             if (p->isSynth() && DawSession::kindOf (*track) == DawSession::TrackKind::midi && track->pluginList.indexOf (p) == 0) continue;
-            auto* b = slots.add (new juce::TextButton (p->getName()));
-            styleButton (*b);
-            b->setColour (juce::TextButton::buttonColourId, p->isEnabled() ? juce::Colour (0xff23292a) : juce::Colour (0xff1c1c1e));
-            b->setColour (juce::TextButton::textColourOffId, p->isEnabled() ? VegaColours::text : VegaColours::textDim);
+            auto* b = slots.add (new cs::ScreenButton (p->getName()));
+            b->ink = p->isEnabled() ? VegaColours::accent : VegaColours::textDim.withAlpha (0.6f);
+            b->setTooltip (p->getName() + (p->isEnabled() ? "" : " (bypassed)") + " - click to open, right-click for options");
             b->onClick = [this, pp = te::Plugin::Ptr (p), b]
             {
                 if (juce::ModifierKeys::currentModifiers.isPopupMenu()) slotMenu (pp, b); else dawui::openPlugin (pp.get());
@@ -289,17 +338,22 @@ public:
             if (auto* s = vs.session.findSend (*track, *bus))
             {
                 auto* row = sends.add (new SendRow (*s, bus->getName()));
-                addAndMakeVisible (row->knob); addAndMakeVisible (row->label);
+                row->name.onClick = [this, b = te::AudioTrack::Ptr (bus)]
+                {
+                    juce::PopupMenu m; m.addItem (1, "Remove send to " + b->getName());
+                    m.showMenuAsync ({}, [this, b] (int r) { if (r == 1) if (auto* sp = vs.session.findSend (*track, *b)) { sp->deleteFromParent(); rebuildSlots(); } });
+                };
+                addAndMakeVisible (row->knob); addAndMakeVisible (row->name);
             }
         djPlugin = vs.session.djEq (*track);
         if (DawSession::kindOf (*track) == DawSession::TrackKind::midi)
         {
             auto* first = track->pluginList[0];
-            instrument.setButtonText (first != nullptr && first->isSynth() ? first->getName() : "Choose instrument...");
+            instrument.setButtonText (first != nullptr && first->isSynth() ? first->getName() : "Choose instrument");
         }
         outBuses.clear(); output.clear (juce::dontSendNotification);
-        output.addItem ("Out: Master", 1);
-        for (auto* b : vs.session.getBuses()) if (b != track) { outBuses.add (b); output.addItem ("Out: " + b->getName(), outBuses.size() + 1); }
+        output.addItem ("Master", 1);
+        for (auto* b : vs.session.getBuses()) if (b != track) { outBuses.add (b); output.addItem (b->getName(), outBuses.size() + 1); }
         auto* cur = vs.session.getOutputBus (*track);
         output.setSelectedItemIndex (cur == nullptr ? 0 : outBuses.indexOf (cur) + 1, juce::dontSendNotification);
         updateKnobs();
@@ -318,147 +372,189 @@ public:
     {
         if (auto vp = volume())
         {
-            if (! fader.isMouseButtonDown()) fader.setValue (vp->getVolumeDb(), juce::dontSendNotification);
-            if (! pan.isMouseButtonDown()) pan.setValue (vp->getPan(), juce::dontSendNotification);
+            if (! fader.isMouseButtonDown() && std::abs (fader.getValue() - vp->getVolumeDb()) > 0.01) fader.setValue (vp->getVolumeDb(), juce::dontSendNotification);
+            if (! pan.isMouseButtonDown() && std::abs (pan.getValue() - vp->getPan()) > 0.001) pan.setValue (vp->getPan(), juce::dontSendNotification);
         }
         if (auto* d = dj())
         {
-            bool changed = false;
             for (int i = 0; i < 3; ++i)
-                if (! knobs[i].isMouseButtonDown() && std::abs (knobs[i].getValue() - d->band[i]->getCurrentValue()) > 0.05) { knobs[i].setValue (d->band[i]->getCurrentValue(), juce::dontSendNotification); changed = true; }
-            if (! knobs[3].isMouseButtonDown() && std::abs (knobs[3].getValue() - d->filter->getCurrentValue()) > 0.001) { knobs[3].setValue (d->filter->getCurrentValue(), juce::dontSendNotification); changed = true; }
-            if (changed) repaint();
+                if (! knobs[i].isMouseButtonDown() && std::abs (knobs[i].getValue() - d->band[i]->getCurrentValue()) > 0.05) knobs[i].setValue (d->band[i]->getCurrentValue(), juce::dontSendNotification);
+            if (! knobs[3].isMouseButtonDown() && std::abs (knobs[3].getValue() - d->filter->getCurrentValue()) > 0.001) knobs[3].setValue (d->filter->getCurrentValue(), juce::dontSendNotification);
+            const auto tn = VegaDJEQPlugin::tapeName (d->tapeValue.get());
+            if (tape.getButtonText() != tn) { tape.setButtonText (tn); tape.ink = d->tapeValue.get() > 0 ? VegaColours::accent : VegaColours::textDim; tape.repaint(); }
         }
         for (auto* s : sends) if (! s->knob.isMouseButtonDown()) s->knob.setValue (s->send.getGainDb(), juce::dontSendNotification);
         if (track != nullptr)
         {
-            const bool sh = owner.shift;
-            pads[0].setToggleState (sh ? dawui::isArmed (*track) : track->isSolo (false), juce::dontSendNotification);
-            pads[1].setToggleState (sh ? vs.selectedTrack == track->itemID : ! track->isMuted (false), juce::dontSendNotification);
-            pads[0].led = sh ? juce::Colour (0xffff3355) : xl::columnColour (col);
-            pads[0].setTooltip (sh ? "Record arm" : "Solo"); pads[1].setTooltip (sh ? "Select" : "Mute (lit = playing)");
-            pads[0].repaint(); pads[1].repaint();
+            auto setT = [] (juce::Button& b, bool on) { if (b.getToggleState() != on) b.setToggleState (on, juce::dontSendNotification); };
+            setT (rec, dawui::isArmed (*track)); setT (solo, track->isSolo (false)); setT (mute, track->isMuted (false));
+            const auto inName = currentInput();
+            if (input.getButtonText() != inName) input.setButtonText (inName);
+            auto& arm = vs.edit().getAutomationRecordManager();
+            const juce::String am = arm.isWritingAutomation() ? "WRITE" : arm.isReadingAutomation() ? "READ" : "OFF";
+            if (autoMode.getButtonText() != am)
+            {
+                autoMode.setButtonText (am);
+                autoMode.ink = am == "WRITE" ? juce::Colour (0xffff5a5a) : am == "READ" ? VegaColours::accent : VegaColours::textDim;
+                autoMode.repaint();
+            }
         }
         auto* m = measurer;
-        if (track == nullptr) if (auto* ctx = vs.edit().getCurrentPlaybackContext()) { if (! masterAdded) { ctx->masterLevels.addClient (client); masterAdded = true; masterCtx = ctx; } m = &ctx->masterLevels; }
         if (m != nullptr)
-            for (int c = 0; c < 2; ++c) { const float db = client.getAndClearAudioLevel (c).dB; level[c] = std::max (db, level[c] - 1.5f); }
+            for (int c = 0; c < 2; ++c)
+            {
+                const float db = client.getAndClearAudioLevel (c).dB;
+                level[c] = std::max (db, level[c] - 1.5f);
+                hold[c] = level[c] >= hold[c] ? level[c] : hold[c] - 0.4f;
+            }
+        // VU: slow (300 ms-ish) ballistics on the louder side
+        const float target = juce::jlimit (-20.0f, 3.0f, std::max (level[0], level[1]) + 6.0f);
+        vu += (target - vu) * 0.18f;
         const bool sel = track != nullptr && vs.selectedTrack == track->itemID;
         if (sel != wasSelected) { wasSelected = sel; repaint(); }
-        repaint (meterArea); repaint (valueArea);
+        repaint (meterArea.expanded (2)); repaint (vuArea);
     }
     void paint (juce::Graphics& g) override
     {
         using namespace mixlayout;
-        auto r = getLocalBounds().toFloat();
+        auto r = getLocalBounds();
         const bool sel = track != nullptr && vs.selectedTrack == track->itemID;
-        if (sel) { g.setColour (juce::Colours::white.withAlpha (0.035f)); g.fillRoundedRectangle (r.reduced (1.0f), 6.0f); g.setColour (juce::Colours::white.withAlpha (0.16f)); g.drawRoundedRectangle (r.reduced (1.0f), 6.0f, 1.0f); }
-        const auto tcol = track != nullptr ? DawSession::trackColour (*track) : VegaColours::gold;
-        g.setColour (tcol); g.fillRoundedRectangle (juce::Rectangle<float> (W - 24.0f, 3.0f).withCentre ({ W * 0.5f, 5.0f }), 1.5f);
-        g.setColour (track == nullptr ? VegaColours::gold : juce::Colour (0xffe9e9e9)); g.setFont (VegaFonts::ui (12.5f, true));
-        g.drawText (track != nullptr ? track->getName() : juce::String ("MASTER"), 6, 9, W - 12, 18, juce::Justification::centred, true);
-        if (showEditSection())
+        // strip body: the plug-ins' charcoal panel with a hairline divider
+        g.setGradientFill (juce::ColourGradient (VegaColours::panelLight, 0, 0, VegaColours::panel, 0, (float) getHeight(), false));
+        g.fillRect (r);
+        g.setColour (VegaColours::line); g.drawVerticalLine (getWidth() - 1, 0, (float) getHeight());
+        if (sel) { g.setColour (VegaColours::accent.withAlpha (0.05f)); g.fillRect (r); g.setColour (VegaColours::accent.withAlpha (0.35f)); g.drawRect (r, 1); }
+        // section titles
+        for (auto& t : titles) vegapaint::sectionTitle (g, t.r, t.text);
+        // VU (black screen, cyan needle)
+        if (! vuArea.isEmpty())
         {
-            g.setColour (juce::Colours::black.withAlpha (0.25f)); g.fillRoundedRectangle (juce::Rectangle<float> (4.0f, (float) headerH, W - 8.0f, (float) editH - 4.0f), 4.0f);
+            auto v = vuArea.toFloat();
+            vegapaint::screen (g, v);
+            const auto pivot = juce::Point<float> (v.getCentreX(), v.getBottom() + 10.0f);
+            const float rad = v.getHeight() + 2.0f;
+            auto angleFor = [] (float db) { return juce::jmap (db, -20.0f, 3.0f, -0.82f, 0.82f); };
+            juce::Path arc; arc.addCentredArc (pivot.x, pivot.y, rad - 6, rad - 6, 0, angleFor (-20), angleFor (0), true);
+            g.setColour (VegaColours::textDim.withAlpha (0.8f)); g.strokePath (arc, juce::PathStrokeType (1.2f));
+            juce::Path hot; hot.addCentredArc (pivot.x, pivot.y, rad - 6, rad - 6, 0, angleFor (0), angleFor (3), true);
+            g.setColour (juce::Colour (0xffff5a5a)); g.strokePath (hot, juce::PathStrokeType (2.2f));
+            g.setFont (VegaFonts::ui (8.5f)); g.setColour (VegaColours::textDim);
+            g.drawText ("-20", (int) v.getX() + 4, (int) v.getY() + 2, 20, 10, juce::Justification::left);
+            g.setColour (juce::Colour (0xffff5a5a)); g.drawText ("+3", (int) v.getRight() - 18, (int) v.getY() + 2, 14, 10, juce::Justification::right);
+            g.setColour (VegaColours::textDim); g.drawText ("VU", vuArea.withTrimmedTop (vuArea.getHeight() - 11), juce::Justification::centred);
+            const float a = angleFor (vu);
+            g.saveState(); g.reduceClipRegion (vuArea);
+            g.setColour (VegaColours::accent);
+            g.drawLine (pivot.x + std::sin (a) * 12.0f, pivot.y - std::cos (a) * 12.0f, pivot.x + std::sin (a) * (rad - 3), pivot.y - std::cos (a) * (rad - 3), 1.5f);
+            g.restoreState();
         }
-        // EQ section, drawn like a plug-in panel: titled box, knob titles above, values below
-        if (knobs[0].isVisible())
-        {
-            auto box = juce::Rectangle<float> (5.0f, (float) knobs[0].getY() - 15.0f, W - 10.0f, (float) (knobs[3].getBottom() - knobs[0].getY()) + 30.0f);
-            g.setColour (juce::Colour (0xff181818)); g.fillRoundedRectangle (box, 4.0f);
-            g.setColour (VegaColours::line); g.drawRoundedRectangle (box.reduced (0.5f), 4.0f, 1.0f);
-            g.setColour (VegaColours::line); g.drawHorizontalLine (knobs[3].getY() - 13, box.getX() + 6, box.getRight() - 6);
-        }
-        static const char* labels[] { "HI", "MID", "LOW", "FILTER" };
-        for (int i = 0; i < mixlayout::numKnobs; ++i)
+        // knob captions + values
+        static const char* labels[] { "HI", "MID", "LO", "FILTER" };
+        for (int i = 0; i < 4; ++i)
         {
             if (! knobs[i].isVisible()) continue;
             auto kb = knobs[i].getBounds();
             const double v = knobs[i].getValue();
             const bool killed = i < 3 && v <= VegaDJEQPlugin::killDb + 0.05;
             const bool active = i < 3 ? std::abs (v) >= 0.05 : std::abs (v) >= 0.03;
-            g.setFont (VegaFonts::ui (10.0f, true)); g.setColour (VegaColours::text);
-            g.drawText (labels[i], 0, kb.getY() - 12, W, 12, juce::Justification::centred);
-            g.setFont (VegaFonts::ui (9.5f));
+            g.setFont (VegaFonts::ui (9.5f, true));
             g.setColour (killed ? juce::Colour (0xffff5a5a) : active ? VegaColours::accent : VegaColours::textDim);
-            g.drawText (active || killed ? knobs[i].getTextFromValue (v) : juce::String (i < 3 ? "0 dB" : "OFF"), 0, kb.getBottom() - 1, W, 11, juce::Justification::centred);
+            g.drawText (killed ? juce::String ("KILL") : juce::String (labels[i]), kb.getX() - 6, kb.getBottom() - 2, kb.getWidth() + 12, 11, juce::Justification::centred);
         }
-        // scale ticks to the right of the fader
-        auto fb = fader.getBounds();
-        const int tx = fb.getCentreX() + 24;
-        for (int i = 0; i <= 8; ++i)
+        if (pan.isVisible())
         {
-            const int y = fb.getY() + 13 + (int) ((fb.getHeight() - 26) * i / 8.0f);
-            g.setColour (juce::Colour (0xffd0d0d0).withAlpha (0.75f));
-            g.fillRect (i % 2 == 0 ? tx : tx + 6, y, i % 2 == 0 ? 22 : 12, 2);
+            auto pb = pan.getBounds();
+            g.setFont (VegaFonts::ui (9.5f, true));
+            g.setColour (std::abs (pan.getValue()) >= 0.01 ? VegaColours::accent : VegaColours::textDim);
+            g.drawText ("PAN " + pan.getTextFromValue (pan.getValue()), pb.getX() - 10, pb.getBottom() - 2, pb.getWidth() + 20, 11, juce::Justification::centred);
         }
-        // LED meter (left of the fader), same segments and colours as the plug-ins' meters
+        // divider above the channel controls
+        if (dividerY > 0) { g.setColour (VegaColours::line); g.drawHorizontalLine (dividerY, 0, (float) getWidth() - 1); }
+        // meters (the plug-ins' LED columns) + scale
+        if (! meterArea.isEmpty())
         {
             auto mr = meterArea.toFloat();
-            const int nSeg = (int) std::size (vegaui::LedMeter::segDb);
-            const float segH = mr.getHeight() / (float) nSeg, colW = (mr.getWidth() - 2.0f) / 2.0f;
-            for (int c = 0; c < 2; ++c)
-                for (int i = 0; i < nSeg; ++i)
-                {
-                    const float th = vegaui::LedMeter::segDb[i];
-                    auto seg = juce::Rectangle<float> (mr.getX() + c * (colW + 2.0f), mr.getY() + i * segH, colW, segH).reduced (0, segH * 0.18f);
-                    const juce::Colour col = th >= -0.1f ? juce::Colour (0xffff5a5a) : (th > -18.0f ? juce::Colours::white : VegaColours::accent);
-                    g.setColour (level[c] >= th ? col : juce::Colour (0xff3a3a3a));
-                    g.fillRect (seg);
-                }
+            const float cw = (mr.getWidth() - 2.0f) * 0.5f;
+            vegapaint::ledColumn (g, mr.withWidth (cw), level[0], hold[0]);
+            vegapaint::ledColumn (g, mr.withWidth (cw).translated (cw + 2.0f, 0), level[1], hold[1]);
         }
-        // value readout
-        g.setFont (VegaFonts::mono (11.0f)); g.setColour (VegaColours::textDim);
-        g.drawText (juce::String (fader.getValue(), 1) + " dB", valueArea, juce::Justification::centred);
-        // column number like the hardware's 1..8 / 9..16 labels
-        if (track != nullptr)
+        // dB readout
+        if (! dbArea.isEmpty())
         {
-            g.setFont (VegaFonts::ui (9.5f, true)); g.setColour (VegaColours::textDim.withAlpha (0.8f));
-            g.drawText (juce::String (col + 1), 0, mixlayout::padY (getHeight(), 0) - 15, W, 12, juce::Justification::centred);
+            vegapaint::screen (g, dbArea.toFloat());
+            g.setFont (VegaFonts::mono (11.0f)); g.setColour (VegaColours::text);
+            g.drawText (juce::String (fader.getValue(), 1) + " dB", dbArea, juce::Justification::centred);
         }
+        // name plate with the track colour across the top
+        auto np = nameArea;
+        g.setColour (VegaColours::bar); g.fillRect (np);
+        const auto tcol = track != nullptr ? DawSession::trackColour (*track) : VegaColours::accent;
+        g.setColour (tcol); g.fillRect (np.removeFromTop (3));
+        g.setColour (sel ? VegaColours::accent : juce::Colour (0xffe6e6e6)); g.setFont (VegaFonts::ui (12.5f, true));
+        g.drawFittedText (name().toUpperCase(), np.reduced (4, 0), juce::Justification::centred, 1, 0.75f);
     }
     void resized() override
     {
         using namespace mixlayout;
-        const int h = getHeight();
-        int y = headerH;
-        const bool ed = showEditSection();
-        for (auto* c : std::initializer_list<juce::Component*> { &instrument, &swapInst, &addFx, &addSend, &output }) c->setVisible (ed && track != nullptr && (c != &instrument && c != &swapInst ? true : DawSession::kindOf (*track) == DawSession::TrackKind::midi));
+        titles.clear();
+        const int h = getHeight(), x0 = 8, w = W - 16;
+        int y = 6;
+        auto section = [&] (const juce::String& t) { titles.add ({ { 0, y, W, title }, t }); y += title + 2; };
+        const bool hasTrack = track != nullptr;
+        // INPUT
+        section ("Input"); input.setBounds (x0, y, w, combo); y += combo + gap;
+        // CONSOLE: VU + HI / MID / LO
+        section ("Console");
+        vuArea = { x0, y, w, vuH }; y += vuH + 2;
+        for (int i = 0; i < 3; ++i) knobs[i].setBounds (x0 - 4 + i * (w + 8) / 3, y, (w + 8) / 3, eqRow - 10);
+        y += eqRow + 2;
+        // TAPE
+        section ("Tape"); tape.setBounds (x0, y, w, combo); y += combo + gap;
+        // INSERTS + SENDS (hidden with the panel's EDIT key)
+        const bool ed = owner.showEdit && hasTrack;
+        instrument.setVisible (ed && hasTrack && DawSession::kindOf (*track) == DawSession::TrackKind::midi);
+        addFx.setVisible (ed); addSend.setVisible (ed);
         for (auto* s : slots) s->setVisible (ed);
-        for (auto* s : sends) { s->knob.setVisible (ed); s->label.setVisible (ed); }
+        for (auto* s : sends) { s->knob.setVisible (ed); s->name.setVisible (ed); }
         if (ed)
         {
-            int ey = y + 4;
-            if (instrument.isVisible()) { instrument.setBounds (8, ey, W - 38, 22); swapInst.setBounds (W - 28, ey, 20, 22); ey += 26; }
-            for (auto* s : slots) { s->setBounds (8, ey, W - 16, 20); ey += 22; }
-            addFx.setBounds (8, ey, W - 16, 20); ey += 24;
-            for (auto* s : sends) { s->label.setBounds (8, ey + 4, W - 48, 18); s->knob.setBounds (W - 40, ey, 32, 26); ey += 28; }
-            addSend.setBounds (8, ey, W - 16, 20); ey += 24;
-            output.setBounds (8, ey, W - 16, 22);
-            y += editH;
+            const int top = y;
+            section ("Inserts");
+            if (instrument.isVisible()) { instrument.setBounds (x0, y, w, 22); y += 24; }
+            for (auto* s : slots) { s->setBounds (x0, y, w, 22); y += 24; }
+            addFx.setBounds (x0, y, w, 22); y += 24 + gap;
+            section ("Sends");
+            for (auto* s : sends) { s->name.setBounds (x0, y + 1, w - 28, combo); s->knob.setBounds (x0 + w - 26, y - 2, 28, 26); y += 26; }
+            addSend.setBounds (x0, y, w, combo); y += 22 + gap;
+            y = std::max (y, top + editH);
         }
-        else if (track == nullptr) y += editH;
-        y += 4;
-        for (int i = 0; i < numKnobs; ++i)
-        {
-            knobs[i].setVisible (track != nullptr);
-            knobs[i].setBounds (W / 2 - 30, y + (i * knobRowH) + 11, 60, 46);
-        }
-        y += numKnobs * knobRowH + 8;
-        pan.setBounds (10, y, W - 20, 20); y += 26;
-        const int fBottom = (track != nullptr ? padY (h, 0) - 20 : h - bottom - 20) - 16;
-        fader.setBounds (W / 2 - 36, y, 60, std::max (60, fBottom - y));
-        meterArea = { fader.getX() - 10, y + 8, 12, std::max (40, fader.getHeight() - 16) };
-        valueArea = { 0, fader.getBottom() + 1, W, 14 };
-        if (track != nullptr) for (int i = 0; i < 2; ++i) pads[i].setBounds (2, padY (h, i), W - 4, padH);
+        // OUTPUT
+        section ("Output"); output.setBounds (x0, y, w, combo); y += combo + gap + 2;
+        dividerY = y - 3;
+        autoMode.setBounds (x0, y + 2, w, combo); y += combo + 6;
+        // PAN + FILTER
+        pan.setBounds (x0 + 2, y, w / 2 - 4, panRow - 12);
+        knobs[3].setBounds (x0 + w / 2 + 2, y, w / 2 - 4, panRow - 12);
+        y += panRow;
+        // REC / S / M
+        const int bw = (w + 4) / 3;
+        rec.setBounds (x0 - 2, y, bw, sqRow); solo.setBounds (x0 - 2 + bw, y, bw, sqRow); mute.setBounds (x0 - 2 + 2 * bw, y, bw, sqRow);
+        y += sqRow + 4;
+        // fader + meters, dB readout, name plate
+        nameArea = { 0, h - nameH, W - 1, nameH };
+        dbArea = { x0, nameArea.getY() - dbH - 6, w, dbH };
+        const int fTop = y, fBottom = dbArea.getY() - 6;
+        fader.setBounds (x0 + 2, fTop, 64, std::max (60, fBottom - fTop));
+        meterArea = { fader.getRight() + 8, fTop + 8, 18, std::max (40, fader.getHeight() - 16) };
+        for (auto* c : std::initializer_list<juce::Component*> { &input, &tape, &output, &autoMode, &rec, &solo, &mute }) c->setVisible (hasTrack);
     }
     void mouseDown (const juce::MouseEvent& e) override
     {
-        if (track != nullptr && e.y < mixlayout::headerH) { vs.selectTrack (track.get()); owner.touched (track->getName(), "Selected"); }
+        if (track == nullptr || ! nameArea.contains (e.getPosition())) return;
+        vs.selectTrack (track.get()); owner.touched (track->getName(), "Selected");
     }
     te::AudioTrack::Ptr track;
 private:
-    bool showEditSection() const { return owner.showEdit && track != nullptr; }
     VegaDJEQPlugin* dj() const { return dynamic_cast<VegaDJEQPlugin*> (djPlugin.get()); }
     void updateKnobs()
     {
@@ -470,33 +566,74 @@ private:
         repaint();
     }
     void touch (const juce::String& what, const juce::String& value) { owner.touched (name() + "  " + what, value); }
-    void topPad()
+    juce::String currentInput()
     {
-        if (owner.shift) { dawui::toggleArm (*track); owner.touched (track->getName(), dawui::isArmed (*track) ? "Armed" : "Disarmed"); }
-        else { track->setSolo (! track->isSolo (false)); owner.touched (track->getName(), track->isSolo (false) ? "Solo On" : "Solo Off"); }
+        juce::StringArray names;
+        for (auto* in : track->edit.getAllInputDevices())
+            if (te::isOnTargetTrack (*in, *track, 0)) names.add (in->getInputDevice().getName());
+        if (names.isEmpty()) return "No input";
+        return names.size() == 1 ? names[0] : names[0] + " +" + juce::String (names.size() - 1);
     }
-    void bottomPad()
+    void inputMenu()
     {
-        if (owner.shift) { vs.selectTrack (track.get()); owner.touched (track->getName(), "Selected"); }
-        else { track->setMute (! track->isMuted (false)); owner.touched (track->getName(), track->isMuted (false) ? "Muted" : "Unmuted"); }
+        juce::PopupMenu m;
+        int id = 1; std::vector<te::InputDeviceInstance*> list;
+        for (auto* in : track->edit.getAllInputDevices())
+        {
+            const auto type = in->getInputDevice().getDeviceType();
+            if (type != te::InputDevice::waveDevice && type != te::InputDevice::physicalMidiDevice) continue;
+            m.addItem (id++, (type == te::InputDevice::waveDevice ? "Audio: " : "MIDI: ") + in->getInputDevice().getName(), true, te::isOnTargetTrack (*in, *track, 0));
+            list.push_back (in);
+        }
+        if (list.empty()) m.addItem (-1, "No inputs enabled - Options > Audio / MIDI Settings", false);
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&input), [this, list] (int r)
+        {
+            if (r < 1 || r > (int) list.size()) return;
+            auto* in = list[(size_t) r - 1];
+            if (te::isOnTargetTrack (*in, *track, 0)) [[maybe_unused]] auto res = in->removeTarget (track->itemID, &track->edit.getUndoManager());
+            else [[maybe_unused]] auto res = in->setTarget (track->itemID, in->getInputDevice().getDeviceType() == te::InputDevice::waveDevice, &track->edit.getUndoManager(), 0);
+        });
     }
-    static void styleButton (juce::TextButton& b)
+    void tapeMenu()
     {
-        b.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff222225));
-        b.setColour (juce::TextButton::textColourOffId, VegaColours::text);
+        auto* d = dj(); if (d == nullptr) return;
+        juce::PopupMenu m;
+        m.addItem (1, "Off", true, d->tapeValue.get() == 0);
+        m.addItem (2, "15 ips - warm, softer top, more low end", true, d->tapeValue.get() == 1);
+        m.addItem (3, "30 ips - clean, a little glue", true, d->tapeValue.get() == 2);
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&tape), [this] (int r)
+        {
+            if (r < 1) return;
+            if (auto* dd = dj()) { dd->tapeValue = r - 1; touch ("Tape", VegaDJEQPlugin::tapeName (r - 1)); }
+        });
+    }
+    void automationMenu()
+    {
+        auto& arm = vs.edit().getAutomationRecordManager();
+        juce::PopupMenu m;
+        m.addItem (1, "Read - play automation back", true, arm.isReadingAutomation() && ! arm.isWritingAutomation());
+        m.addItem (2, "Write - record moves while playing", true, arm.isWritingAutomation());
+        m.addItem (3, "Off - ignore automation", true, ! arm.isReadingAutomation());
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&autoMode), [this] (int r)
+        {
+            auto& a = vs.edit().getAutomationRecordManager();
+            if (r == 1) { a.setReadingAutomation (true); a.setWritingAutomation (false); }
+            else if (r == 2) { a.setReadingAutomation (true); a.setWritingAutomation (true); }
+            else if (r == 3) { a.setWritingAutomation (false); a.setReadingAutomation (false); }
+        });
     }
     struct SendRow
     {
         SendRow (te::AuxSendPlugin& s, const juce::String& busName) : send (s)
         {
-            label.setText ("> " + busName, juce::dontSendNotification); label.setFont (VegaFonts::ui (10.5f));
-            label.setColour (juce::Label::textColourId, VegaColours::text);
+            name.setButtonText (busName); name.ink = VegaColours::text;
             knob.setRange (-60.0, 6.0, 0.1); knob.setSkewFactorFromMidPoint (-12.0);
             knob.setTextValueSuffix (" dB"); knob.setDoubleClickReturnValue (true, 0.0);
             knob.setValue (s.getGainDb(), juce::dontSendNotification);
             knob.onValueChange = [this] { send.setGainDb ((float) knob.getValue()); };
+            knob.setTooltip ("Send level to " + busName);
         }
-        te::AuxSendPlugin& send; xl::Knob knob; juce::Label label;
+        te::AuxSendPlugin& send; xl::Knob knob; cs::ComboButton name;
     };
     void chooseInstrument()
     {
@@ -557,16 +694,23 @@ private:
             rebuildSlots();
         });
     }
+    struct Title { juce::Rectangle<int> r; juce::String text; };
     MixerView& owner;
     ViewState& vs;
     int col = 0;
-    xl::Fader fader; xl::Knob knobs[mixlayout::numKnobs]; xl::PanBar pan; xl::Pad pads[2];
-    juce::TextButton instrument, addFx, addSend, swapInst; juce::ComboBox output;
-    juce::OwnedArray<juce::TextButton> slots; juce::OwnedArray<SendRow> sends; juce::Array<te::AudioTrack*> outBuses;
+    xl::Fader fader; xl::Knob knobs[4]; xl::Knob pan;
+    cs::SqButton rec { "Rec", juce::Colour (0xffff5a5a) }, solo { "S", VegaColours::accent }, mute { "M", VegaColours::gold };
+    cs::ComboButton input, tape, autoMode, addSend;
+    cs::ScreenButton instrument, addFx;
+    juce::ComboBox output;
+    juce::OwnedArray<cs::ScreenButton> slots; juce::OwnedArray<SendRow> sends; juce::Array<te::AudioTrack*> outBuses;
+    juce::Array<Title> titles;
     te::Plugin::Ptr djPlugin;
     te::LevelMeasurer::Client client; te::LevelMeasurer* measurer = nullptr;
-    bool masterAdded = false, wasSelected = false; te::EditPlaybackContext* masterCtx = nullptr;
-    float level[2] { -100, -100 }; juce::Rectangle<int> meterArea, valueArea;
+    bool wasSelected = false;
+    float level[2] { -100, -100 }, hold[2] { -100, -100 }, vu = -20.0f;
+    int dividerY = 0;
+    juce::Rectangle<int> meterArea, dbArea, nameArea, vuArea;
 };
 
 //==============================================================================
@@ -581,18 +725,9 @@ public:
     Shape shape; juce::Colour lit;
     void paintButton (juce::Graphics& g, bool over, bool down) override
     {
-        auto r = getLocalBounds().toFloat().reduced (1.5f);
-        const float rad = shape == pill ? r.getHeight() * 0.45f : 4.0f;
-        g.setColour (juce::Colours::black.withAlpha (0.6f)); g.fillRoundedRectangle (r.translated (0, 2.0f), rad);
-        const bool on = getToggleState();
-        auto top = on ? lit.brighter (0.25f) : juce::Colour (down ? 0xffa4a9b2 : over ? 0xffc9ced6 : 0xffbcc1c9);
-        auto bot = on ? lit.darker (0.15f) : juce::Colour (0xff8d929b);
-        if (on) { g.setColour (lit.withAlpha (0.3f)); g.fillRoundedRectangle (r.expanded (3.0f), rad + 3.0f); }
-        g.setGradientFill (juce::ColourGradient (top, 0, r.getY(), bot, 0, r.getBottom(), false));
-        g.fillRoundedRectangle (r, rad);
-        g.setColour (juce::Colours::white.withAlpha (0.35f)); g.drawHorizontalLine ((int) r.getY() + 1, r.getX() + rad, r.getRight() - rad);
-        g.setColour (juce::Colours::black.withAlpha (0.45f)); g.drawRoundedRectangle (r, rad, 1.0f);
+        vegapaint::key (g, getLocalBounds().toFloat().reduced (1.5f), getToggleState(), over, down, vegaLit (lit));
     }
+    static juce::Colour vegaLit (juce::Colour c) { return c.getRed() > 200 && c.getGreen() < 170 ? juce::Colour (0xffff5a5a) : VegaColours::accent; }
 };
 
 /** Dark transport key with an icon */
@@ -604,16 +739,10 @@ public:
     Icon icon;
     void paintButton (juce::Graphics& g, bool over, bool down) override
     {
-        auto r = getLocalBounds().toFloat().reduced (1.5f);
-        g.setColour (juce::Colours::black.withAlpha (0.7f)); g.fillRoundedRectangle (r.translated (0, 2.0f), 5.0f);
-        g.setColour (juce::Colour (0xff0f1012)); g.fillRoundedRectangle (r, 5.0f);
-        auto face = r.reduced (3.0f);
-        g.setGradientFill (juce::ColourGradient (juce::Colour (down ? 0xff26282c : over ? 0xff3a3d42 : 0xff33363b), 0, face.getY(), juce::Colour (0xff222428), 0, face.getBottom(), false));
-        g.fillRoundedRectangle (face, 3.0f);
-        const auto c = face.getCentre(); const float s = face.getHeight() * 0.22f;
         const bool on = getToggleState();
-        juce::Colour ink = juce::Colour (0xff5d6168);
-        if (on) ink = icon == rec ? juce::Colour (0xffff3a4a) : icon == play ? juce::Colour (0xff32e070) : juce::Colour (0xffd8dce2);
+        const auto lit = icon == rec ? juce::Colour (0xffff5a5a) : VegaColours::accent;
+        auto face = vegapaint::key (g, getLocalBounds().toFloat().reduced (1.5f), on, over, down, lit);
+        const auto c = face.getCentre(); const float s = face.getHeight() * 0.22f;
         juce::Path p;
         auto tri = [&] (float cx, bool right) { if (right) p.addTriangle (cx - s, c.y - s, cx - s, c.y + s, cx + s * 0.9f, c.y); else p.addTriangle (cx + s, c.y - s, cx + s, c.y + s, cx - s * 0.9f, c.y); };
         switch (icon)
@@ -624,8 +753,7 @@ public:
             case play: tri (c.x + s * 0.1f, true); break;
             case rec:  p.addEllipse (c.x - s * 0.95f, c.y - s * 0.95f, s * 1.9f, s * 1.9f); break;
         }
-        if (on) { g.setColour (ink.withAlpha (0.35f)); g.strokePath (p, juce::PathStrokeType (5.0f)); }
-        g.setColour (ink); g.fillPath (p);
+        g.setColour (on ? vegapaint::keyInk (true) : icon == rec ? juce::Colour (0xffff5a5a) : VegaColours::text); g.fillPath (p);
     }
 };
 
@@ -638,21 +766,15 @@ public:
     bool plain = false;     // true: all-black wheel (no bright ring)
     void paint (juce::Graphics& g) override
     {
-        auto r = getLocalBounds().toFloat().reduced (4.0f);
+        // a big plug-in knob: machined collar, black face, plus a finger dimple
+        auto r = getLocalBounds().toFloat().reduced (6.0f);
         const auto c = r.getCentre(); const float rad = std::min (r.getWidth(), r.getHeight()) * 0.5f;
-        g.setColour (juce::Colours::black.withAlpha (0.6f)); g.fillEllipse (juce::Rectangle<float> (rad * 2 + 6, rad * 2 + 6).withCentre (c.translated (0, 3)));
-        if (plain) g.setColour (juce::Colour (0xff1a1b1e));
-        else g.setGradientFill (juce::ColourGradient (juce::Colours::white, c.x, c.y - rad, juce::Colour (0xff8a8e94), c.x, c.y + rad, false));
-        g.fillEllipse (juce::Rectangle<float> (rad * 2, rad * 2).withCentre (c));                   // outer ring
-        g.setColour (juce::Colour (0xff0d0e10)); g.fillEllipse (juce::Rectangle<float> (rad * 1.86f, rad * 1.86f).withCentre (c));
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff2c2e33), c.x - rad * 0.5f, c.y - rad * 0.6f, juce::Colour (0xff141518), c.x + rad * 0.5f, c.y + rad * 0.7f, true));
-        g.fillEllipse (juce::Rectangle<float> (rad * 1.76f, rad * 1.76f).withCentre (c));
-        // finger dimple
+        vegapaint::knob (g, juce::Rectangle<float> (rad * 2, rad * 2).withCentre (c), angle, true, juce::Colours::transparentWhite);
         const juce::Point<float> d (c.x + std::sin (angle) * rad * 0.52f, c.y - std::cos (angle) * rad * 0.52f);
-        const float dr = rad * 0.24f;
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff3a3d42), d.x, d.y - dr, juce::Colour (0xff0c0d0f), d.x, d.y + dr, false));
+        const float dr = rad * 0.2f;
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff141414), d.x, d.y - dr, juce::Colour (0xff353535), d.x, d.y + dr, false));
         g.fillEllipse (juce::Rectangle<float> (dr * 2, dr * 2).withCentre (d));
-        g.setColour (juce::Colours::white.withAlpha (0.08f)); g.drawEllipse (juce::Rectangle<float> (dr * 2, dr * 2).withCentre (d), 1.0f);
+        g.setColour (VegaColours::accent.withAlpha (plain ? 0.0f : 0.5f)); g.drawEllipse (juce::Rectangle<float> (dr * 2, dr * 2).withCentre (d), 1.0f);
     }
     void mouseDown (const juce::MouseEvent& e) override { lastAngle = angleAt (e.position); lastY = e.position.y; if (onTouch) onTouch (true); }
     void mouseUp (const juce::MouseEvent&) override { if (onTouch) onTouch (false); }
@@ -694,18 +816,11 @@ class SoftKey : public juce::Button
 {
 public:
     SoftKey() : juce::Button ({}) {}
-    void paintButton (juce::Graphics& g, bool over, bool down) override
+    void paintButton (juce::Graphics& g, bool over, bool) override
     {
         auto r = getLocalBounds().toFloat().reduced (2.0f);
-        g.setColour (juce::Colours::black.withAlpha (0.35f)); g.fillRoundedRectangle (r.translated (0, 2.0f), 3.0f);
-        if (getToggleState())
-        {
-            g.setColour (juce::Colour (0xfffff0c8).withAlpha (0.35f)); g.fillRoundedRectangle (r.expanded (3.0f), 5.0f);
-            g.setGradientFill (juce::ColourGradient (juce::Colour (0xfffff0c8), r.getCentreX(), r.getCentreY(), juce::Colour (0xffffc860), r.getX(), r.getY(), true));
-        }
-        else g.setGradientFill (juce::ColourGradient (juce::Colour (down ? 0xffa8a8ac : over ? 0xffd2d2d6 : 0xffc4c4c8), 0, r.getY(), juce::Colour (0xff8e8e92), 0, r.getBottom(), false));
-        g.fillRoundedRectangle (r, 3.0f);
-        g.setColour (juce::Colours::black.withAlpha (0.25f)); g.drawRoundedRectangle (r, 3.0f, 1.0f);
+        const float sz = std::min (r.getWidth(), r.getHeight());
+        vegapaint::squareButton (g, juce::Rectangle<float> (sz, sz).withCentre (r.getCentre()), getToggleState(), over);
     }
 };
 
@@ -719,17 +834,9 @@ public:
     Icon icon; juce::Colour lit; bool dark;
     void paintButton (juce::Graphics& g, bool over, bool isDown) override
     {
-        auto r = getLocalBounds().toFloat().reduced (2.0f);
         const bool on = getToggleState();
-        g.setColour (juce::Colours::black.withAlpha (0.45f)); g.fillRoundedRectangle (r.translated (0, 2.0f), 3.0f);
-        g.setColour (juce::Colour (0xff17181a)); g.fillRoundedRectangle (r, 3.0f);                           // bezel
-        auto face = r.reduced (3.0f);
-        if (on) { g.setColour (lit.withAlpha (0.4f)); g.fillRoundedRectangle (r.expanded (2.0f), 4.0f); }
-        juce::Colour top = on ? lit.brighter (0.2f) : dark ? juce::Colour (isDown ? 0xff2a2c30 : over ? 0xff3b3e43 : 0xff33363a) : juce::Colour (isDown ? 0xffa8a8ac : over ? 0xffd2d2d6 : 0xffc4c4c8);
-        juce::Colour bot = on ? lit.darker (0.2f) : dark ? juce::Colour (0xff222427) : juce::Colour (0xff8e8e92);
-        g.setGradientFill (juce::ColourGradient (top, 0, face.getY(), bot, 0, face.getBottom(), false));
-        g.fillRoundedRectangle (face, 2.0f);
-        const auto ink = on || ! dark ? juce::Colour (0xff1c1d20) : juce::Colour (0xffe9eaec);
+        auto face = vegapaint::key (g, getLocalBounds().toFloat().reduced (2.0f), on, over, isDown, tp::Key::vegaLit (lit));
+        const auto ink = vegapaint::keyInk (on);
         const auto c = face.getCentre(); const float s = std::min (face.getWidth(), face.getHeight()) * 0.26f;
         g.setColour (ink);
         juce::Path p;
@@ -749,7 +856,7 @@ public:
                 break;
             }
             case metro: p.addTriangle (c.x - s * 0.8f, c.y + s, c.x + s * 0.8f, c.y + s, c.x, c.y - s); g.fillPath (p); p.clear();
-                        g.setColour (on || ! dark ? juce::Colours::white : juce::Colour (0xff222427)); g.drawLine (c.x, c.y + s * 0.6f, c.x + s * 0.6f, c.y - s * 0.6f, 1.5f); return;
+                        g.setColour (on ? VegaColours::accent : juce::Colour (0xff262626)); g.drawLine (c.x, c.y + s * 0.6f, c.x + s * 0.6f, c.y - s * 0.6f, 1.5f); return;
             case dropIn: p.addArrow ({ c.x, c.y - s, c.x, c.y + s * 0.4f }, s * 0.6f, s * 1.6f, s * 0.9f); p.addRectangle (c.x - s, c.y + s * 0.7f, s * 2.0f, s * 0.35f); break;
             case write: { juce::Path a; a.addRectangle (c.x - s, c.y - s, s * 2, s * 2); g.strokePath (a, juce::PathStrokeType (1.4f));
                           p.addTriangle (c.x - s * 0.5f, c.y - s * 0.5f, c.x + s * 0.5f, c.y - s * 0.5f, c.x, c.y + s * 0.5f); break; }
@@ -769,16 +876,8 @@ public:
     Icon icon;
     void paintButton (juce::Graphics& g, bool over, bool down) override
     {
-        auto r = getLocalBounds().toFloat().reduced (2.0f);
         const bool on = getToggleState();
-        g.setColour (juce::Colours::black.withAlpha (0.45f)); g.fillRoundedRectangle (r.translated (0, 3.0f), 4.0f);
-        g.setColour (juce::Colour (0xff1a1b1d)); g.fillRoundedRectangle (r, 4.0f);
-        auto face = r.reduced (3.0f);
-        juce::Colour top = juce::Colour (down ? 0xffb8b8bc : over ? 0xffe2e2e6 : 0xffd2d2d6), bot = juce::Colour (0xff8a8a8e);
-        if (on && icon == play) { top = juce::Colour (0xff8cff6c); bot = juce::Colour (0xff3fcf32); g.setColour (juce::Colour (0x667dff5a)); g.fillRoundedRectangle (r.expanded (3.0f), 6.0f); }
-        if (on && icon == rec)  { top = juce::Colour (0xffff7a7a); bot = juce::Colour (0xffe03a3a); g.setColour (juce::Colour (0x66ff4040)); g.fillRoundedRectangle (r.expanded (3.0f), 6.0f); }
-        g.setGradientFill (juce::ColourGradient (top, 0, face.getY(), bot, 0, face.getBottom(), false));
-        g.fillRoundedRectangle (face, 3.0f);
+        auto face = vegapaint::key (g, getLocalBounds().toFloat().reduced (2.0f), on, over, down, icon == rec ? juce::Colour (0xffff5a5a) : VegaColours::accent);
         const auto c = face.getCentre(); const float s = face.getHeight() * 0.2f;
         juce::Path p;
         auto tri = [&] (float cx, bool rgt) { if (rgt) p.addTriangle (cx - s, c.y - s, cx - s, c.y + s, cx + s * 0.9f, c.y); else p.addTriangle (cx + s, c.y - s, cx + s, c.y + s, cx - s * 0.9f, c.y); };
@@ -790,7 +889,7 @@ public:
             case play: tri (c.x + s * 0.15f, true); break;
             case rec: p.addEllipse (c.x - s * 0.75f, c.y - s * 0.75f, s * 1.5f, s * 1.5f); break;
         }
-        g.setColour (icon == rec ? juce::Colour (on ? 0xffffffff : 0xffe8352f) : juce::Colour (0xff2a2b2e));
+        g.setColour (on ? vegapaint::keyInk (true) : icon == rec ? juce::Colour (0xffff5a5a) : VegaColours::text);
         g.fillPath (p);
     }
 };
@@ -803,27 +902,16 @@ public:
     std::function<void()> onReset;
     void paint (juce::Graphics& g) override
     {
-        // same look as the master section's knobs: ring of dots, grey skirt, dark cap, white pointer
+        // the plug-ins' knob; endless, so a ring of dots instead of end ticks
         auto r = getLocalBounds().toFloat();
         const auto c = r.getCentre(); const float outer = std::min (r.getWidth(), r.getHeight()) * 0.5f;
-        g.setColour (juce::Colours::white.withAlpha (0.45f));
+        g.setColour (VegaColours::textDim.withAlpha (0.6f));
         for (int i = 0; i < 24; ++i)
         {
             const float a = i * juce::MathConstants<float>::twoPi / 24.0f;
             g.fillEllipse (juce::Rectangle<float> (2.0f, 2.0f).withCentre ({ c.x + std::sin (a) * outer * 0.95f, c.y - std::cos (a) * outer * 0.95f }));
         }
-        const float d = outer * 1.5f;
-        auto skirt = juce::Rectangle<float> (d, d).withCentre (c);
-        g.setColour (juce::Colours::black.withAlpha (0.45f)); g.fillEllipse (skirt.translated (0, 3.0f).expanded (1.0f));
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffd6d6d8), skirt.getX(), skirt.getY(), juce::Colour (0xff6c6c70), skirt.getRight(), skirt.getBottom(), false));
-        g.fillEllipse (skirt);
-        auto cap = skirt.reduced (d * 0.16f).translated (0, -d * 0.04f);
-        const auto capCol = console::black;
-        g.setGradientFill (juce::ColourGradient (capCol.brighter (0.45f), cap.getX(), cap.getY(), capCol.darker (0.35f), cap.getRight(), cap.getBottom(), true));
-        g.fillEllipse (cap);
-        g.setColour (juce::Colours::white.withAlpha (0.18f)); g.fillEllipse (cap.reduced (cap.getWidth() * 0.22f).translated (-cap.getWidth() * 0.1f, -cap.getHeight() * 0.12f));
-        g.setColour (juce::Colours::white);
-        g.drawLine (c.x + std::sin (angle) * d * 0.12f, c.y - std::cos (angle) * d * 0.12f, c.x + std::sin (angle) * d * 0.47f, c.y - std::cos (angle) * d * 0.47f, 2.4f);
+        vegapaint::knob (g, juce::Rectangle<float> (outer * 1.5f, outer * 1.5f).withCentre (c), angle, false, juce::Colours::white, isMouseOver());
     }
     void mouseDown (const juce::MouseEvent& e) override { lastY = e.position.y; }
     void mouseDrag (const juce::MouseEvent& e) override
@@ -1108,47 +1196,47 @@ private:
         g.setColour (juce::Colour (0xff070809)); g.fillRect (scr);
         // tab bar (soft key labels)
         auto tabs = scr.removeFromTop (20.0f);
-        g.setColour (juce::Colour (0xff1c2448)); g.fillRect (tabs);
+        g.setColour (VegaColours::bar); g.fillRect (tabs);
         static const char* tabNames[] { "VU METERS", "EDIT", "SHIFT", "LEARN" };
         for (int i = 0; i < 4; ++i)
         {
             auto tr = juce::Rectangle<float> (tabs.getX() + i * 100.0f, tabs.getY(), 100.0f, tabs.getHeight());
-            if (soft[i].getToggleState()) { g.setColour (juce::Colours::white); g.fillRect (tr.reduced (6, 2)); }
-            g.setColour (soft[i].getToggleState() ? juce::Colour (0xff1c2448) : juce::Colour (0xffd8dcf0));
+            if (soft[i].getToggleState()) { g.setColour (VegaColours::accent); g.fillRect (tr.reduced (6, 2)); }
+            g.setColour (soft[i].getToggleState() ? VegaColours::bar : VegaColours::text);
             g.setFont (VegaFonts::ui (11.0f, true)); g.drawText (tabNames[i], tr, juce::Justification::centred);
         }
-        g.setColour (juce::Colour (0xff0b0e1c)); g.fillRect (scr);
+        g.setColour (juce::Colour (0xff141414)); g.fillRect (scr);
         // touched line
-        g.setColour (juce::Colour (0xffc9d2ff)); g.setFont (VegaFonts::ui (11.0f, true));
+        g.setColour (VegaColours::accent); g.setFont (VegaFonts::ui (11.0f, true));
         g.drawText (line1 + (line2.isNotEmpty() ? "   " + line2 : juce::String()), scr.removeFromTop (18.0f).reduced (8, 0).toNearestInt(), juce::Justification::centred, true);
         // two VU meters
         for (int c = 0; c < 2; ++c)
         {
             auto mr = juce::Rectangle<float> (scr.getX() + 12 + c * 194.0f, scr.getY() + 6, 182.0f, 118.0f);
-            g.setColour (juce::Colour (0xffd8dcf0)); g.setFont (VegaFonts::ui (11.0f, true));
+            g.setColour (VegaColours::text); g.setFont (VegaFonts::ui (11.0f, true));
             g.drawText (c == 0 ? "L" : "R", mr.withHeight (12).translated (0, -4), juce::Justification::centred);
             drawVu (g, mr.withTrimmedTop (10), vuDb[c]);
             // current / max
             auto rd = juce::Rectangle<float> (mr.getX(), mr.getBottom() + 4, mr.getWidth(), 34);
-            g.setFont (VegaFonts::ui (9.5f)); g.setColour (juce::Colour (0xff9aa3c8));
+            g.setFont (VegaFonts::ui (9.5f)); g.setColour (VegaColours::textDim);
             g.drawText ("current", rd.withWidth (rd.getWidth() / 2).withHeight (12), juce::Justification::centred);
-            g.setColour (juce::Colour (0xffff7a8a)); g.drawText ("max", rd.withTrimmedLeft (rd.getWidth() / 2).withHeight (12), juce::Justification::centred);
+            g.setColour (juce::Colour (0xffff5a5a)); g.drawText ("max", rd.withTrimmedLeft (rd.getWidth() / 2).withHeight (12), juce::Justification::centred);
             g.setFont (VegaFonts::ui (16.0f, true)); g.setColour (juce::Colours::white);
             g.drawText (current[c] < -99 ? juce::String ("-inf") : juce::String (current[c], 1) + " dB", rd.withWidth (rd.getWidth() / 2).withTrimmedTop (12), juce::Justification::centred);
-            g.setColour (juce::Colour (0xffff5a6e));
+            g.setColour (juce::Colour (0xffff5a5a));
             g.drawText (peak[c] < -99 ? juce::String ("-inf") : juce::String (peak[c], 1) + " dB", rd.withTrimmedLeft (rd.getWidth() / 2).withTrimmedTop (12), juce::Justification::centred);
         }
         // bottom bar: what each encoder does
         auto bar = juce::Rectangle<float> (scr.getX(), 300, scr.getWidth(), 20);
-        g.setColour (juce::Colour (0xff1c2448)); g.fillRect (bar);
+        g.setColour (VegaColours::bar); g.fillRect (bar);
         for (int i = 0; i < 4; ++i)
         {
             juce::String value; const auto name = encLabel (i, value);
             auto seg = juce::Rectangle<float> ((float) encX (i) - 48, bar.getY(), 96, bar.getHeight());
-            g.setColour (juce::Colour (0xff9aa3c8)); g.setFont (VegaFonts::ui (9.5f, true));
+            g.setColour (VegaColours::textDim); g.setFont (VegaFonts::ui (9.5f, true));
             g.drawText (name, seg.withWidth (44).toNearestInt(), juce::Justification::centredRight);
-            g.setColour (juce::Colours::white); g.fillRect (seg.withTrimmedLeft (48).reduced (0, 3));
-            g.setColour (juce::Colour (0xff11152a)); g.drawText (value, seg.withTrimmedLeft (48).toNearestInt(), juce::Justification::centred);
+            g.setColour (juce::Colour (0xff050505)); g.fillRect (seg.withTrimmedLeft (48).reduced (0, 3));
+            g.setColour (VegaColours::accent); g.drawText (value, seg.withTrimmedLeft (48).toNearestInt(), juce::Justification::centred);
         }
         g.setColour (juce::Colour (0xff3a3c40));
         for (int i = 1; i < 4; ++i) g.fillRect ((float) encX (i) - 49, bar.getY() + 3, 1.0f, bar.getHeight() - 6);
@@ -1189,72 +1277,44 @@ private:
 
     void drawVu (juce::Graphics& g, juce::Rectangle<float> r, float vu)
     {
-        // bezel + backlit face: warm blue glow from inside
-        g.setColour (juce::Colour (0xff2b2f38)); g.fillRoundedRectangle (r, 4.0f);
+        // the plug-ins' black display with a cyan needle
+        vegapaint::screen (g, r);
         auto face = r.reduced (5.0f);
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffe3eeff), face.getCentreX(), face.getBottom() - 10, juce::Colour (0xff6f95d8), face.getX(), face.getY(), true));
-        g.fillRoundedRectangle (face, 2.0f);
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0x66ffe6b0), face.getCentreX(), face.getBottom(), juce::Colour (0x00ffe6b0), face.getCentreX(), face.getY(), false));
-        g.fillRoundedRectangle (face, 2.0f);                                           // warm lamp glow at the bottom
         const juce::Point<float> pivot (face.getCentreX(), face.getBottom() + face.getHeight() * 0.55f);
         const float rad = face.getHeight() * 1.04f;
         auto angleFor = [] (float v)
-        {   // classic VU scale: -20 .. +3 spread over about 96 degrees, non-linear
+        {
             const float n = std::pow (juce::Decibels::decibelsToGain (juce::jlimit (-20.0f, 3.0f, v)) / juce::Decibels::decibelsToGain (3.0f), 0.85f);
-            return juce::degreesToRadians (-40.0f + 80.0f * n);       // keeps the whole scale inside the face
+            return juce::degreesToRadians (-40.0f + 80.0f * n);
         };
-        // scale arcs
         juce::Path arc; arc.addCentredArc (pivot.x, pivot.y, rad, rad, 0, angleFor (-20), angleFor (0), true);
-        g.setColour (juce::Colour (0xff1b2340)); g.strokePath (arc, juce::PathStrokeType (1.3f));
+        g.setColour (VegaColours::textDim); g.strokePath (arc, juce::PathStrokeType (1.3f));
         juce::Path red; red.addCentredArc (pivot.x, pivot.y, rad + 2, rad + 2, 0, angleFor (0), angleFor (3), true);
-        g.setColour (juce::Colour (0xffd23a3a)); g.strokePath (red, juce::PathStrokeType (4.0f));
+        g.setColour (juce::Colour (0xffff5a5a)); g.strokePath (red, juce::PathStrokeType (3.0f));
         g.setFont (VegaFonts::ui (8.5f, true));
         for (float m : { -20.0f, -10.0f, -7.0f, -5.0f, -3.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f })
         {
             const float a = angleFor (m);
             const auto p1 = pivot.getPointOnCircumference (rad, a), p2 = pivot.getPointOnCircumference (rad + 6, a), pl = pivot.getPointOnCircumference (rad + 13, a);
-            g.setColour (m > 0 ? juce::Colour (0xffc02a2a) : juce::Colour (0xff1b2340));
+            g.setColour (m > 0 ? juce::Colour (0xffff5a5a) : VegaColours::textDim);
             g.drawLine ({ p1, p2 }, 1.2f);
             g.drawText (juce::String ((int) std::abs (m)), juce::Rectangle<float> (16, 10).withCentre (pl), juce::Justification::centred);
         }
-        g.setColour (juce::Colour (0xff1b2340)); g.setFont (VegaFonts::ui (11.0f, true));
+        g.setColour (VegaColours::textDim); g.setFont (VegaFonts::ui (11.0f, true));
         g.drawText ("VU", face.withTrimmedTop (face.getHeight() * 0.55f).withHeight (14), juce::Justification::centred);
-        g.setFont (VegaFonts::ui (7.5f)); g.drawText ("Vega Productions", face.withTrimmedTop (face.getHeight() * 0.72f).withHeight (10), juce::Justification::centred);
-        g.setFont (VegaFonts::ui (12.0f, true)); g.drawText ("-", face.reduced (6, 4).toNearestInt(), juce::Justification::bottomLeft);
-        g.setColour (juce::Colour (0xffc02a2a)); g.drawText ("+", face.reduced (6, 4).toNearestInt(), juce::Justification::bottomRight);
-        // needle (clipped to the face)
         g.saveState(); g.reduceClipRegion (face.toNearestInt());
         const float a = angleFor (vu);
-        const auto tip = pivot.getPointOnCircumference (rad + 4, a);
-        g.setColour (juce::Colours::black.withAlpha (0.25f)); g.drawLine ({ pivot.translated (2, 2), tip.translated (2, 2) }, 1.6f);
-        g.setColour (juce::Colour (0xff111318)); g.drawLine ({ pivot, tip }, 1.5f);
+        g.setColour (VegaColours::accent); g.drawLine ({ pivot, pivot.getPointOnCircumference (rad + 4, a) }, 1.6f);
         g.restoreState();
-        g.setColour (juce::Colour (0xff111318)); g.fillEllipse (face.getRight() - 12, face.getY() + 5, 6, 6);   // peak lamp housing
-        // glass
-        g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.18f), face.getX(), face.getY(), juce::Colours::transparentWhite, face.getX(), face.getCentreY(), false));
-        g.fillRoundedRectangle (face, 2.0f);
     }
 
     juce::Image makePlate()
     {
         juce::Image img (juce::Image::RGB, CW, CH, true);
         juce::Graphics g (img);
-        // same finish as the master section's side panels
-        g.setGradientFill (juce::ColourGradient (console::panelTop, 0, 0, console::panelBot, 0, (float) CH, false));
+        g.setGradientFill (juce::ColourGradient (VegaColours::panelLight, 0, 0, VegaColours::panel, 0, (float) CH, false));
         g.fillAll();
-        juce::Random rnd (7);
-        for (int y = 0; y < CH; ++y)         // very fine grain
-        {
-            g.setColour ((rnd.nextBool() ? juce::Colours::white : juce::Colours::black).withAlpha (0.008f + rnd.nextFloat() * 0.012f));
-            g.drawHorizontalLine (y, 0, (float) CW);
-        }
-        g.setColour (juce::Colours::black.withAlpha (0.35f)); g.drawRect (0, 0, CW, CH, 2);
-        for (auto [x, y] : { std::pair<int, int> { CW - 26, 170 }, { CW - 26, 640 } })   // screws
-        {
-            g.setColour (juce::Colour (0xff1e1e20)); g.fillEllipse ((float) x - 9, (float) y - 9, 18, 18);
-            g.setColour (juce::Colour (0xff55555a)); g.fillEllipse ((float) x - 6, (float) y - 6, 12, 12);
-            g.setColour (juce::Colour (0xff1a1b1d)); g.drawLine ((float) x - 4, (float) y, (float) x + 4, (float) y, 1.5f);
-        }
+        g.setColour (VegaColours::line); g.drawRect (0, 0, CW, CH, 1);
         return img;
     }
 
@@ -1316,7 +1376,7 @@ void MixerView::resized()
     int editH = 0;
     if (showEdit) for (auto* s : strips) editH = std::max (editH, s->editNeeded());
     int x = 0;
-    for (auto* s : strips) { s->editH = editH; s->setBounds (x, 0, Strip::W, h); x += Strip::W + 4; }
+    for (auto* s : strips) { s->editH = editH; s->setBounds (x, 0, Strip::W, h); x += Strip::W; }
     content.setSize (std::max (x, r.getWidth()), h);
     for (auto* s : strips) s->resized();
     repaint();
@@ -1324,32 +1384,27 @@ void MixerView::resized()
 
 void MixerView::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colour (0xff121213));
-    // the console body: a matte panel with a soft edge, like the hardware
-    auto body = getLocalBounds().toFloat().reduced (4.0f);
-    g.setColour (juce::Colours::black.withAlpha (0.5f)); g.fillRoundedRectangle (body.translated (0, 2.0f), 12.0f);
-    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff262628), body.getX(), body.getY(), juce::Colour (0xff1b1b1d), body.getX(), body.getBottom(), false));
-    g.fillRoundedRectangle (body, 12.0f);
-    g.setColour (juce::Colour (0xff3a3a3e)); g.drawRoundedRectangle (body.reduced (0.5f), 12.0f, 1.0f);
+    g.fillAll (VegaColours::background);
     if (master != nullptr)
     {   // divider before the master
-        g.setColour (juce::Colour (0xff111113)); g.fillRect (master->getX() - 7, master->getY() + 8, 2, master->getHeight() - 16);
+        g.setColour (VegaColours::line); g.fillRect (master->getX() - 6, master->getY(), 1, master->getHeight());
     }
+    g.setColour (VegaColours::line); g.drawRect (viewport.getBounds().expanded (1), 1);
 }
 
 void MixerView::touched (const juce::String& title, const juce::String& value) { if (panel) panel->show (title, value); }
 
 void MixerView::pageBy (int dir)
 {
-    const int step = 8 * (Strip::W + 4);
+    const int step = 8 * (Strip::W);
     viewport.setViewPosition (juce::jlimit (0, std::max (0, content.getWidth() - viewport.getWidth()), viewport.getViewPositionX() + dir * step), 0);
-    const int first = viewport.getViewPositionX() / (Strip::W + 4) + 1;
+    const int first = viewport.getViewPositionX() / (Strip::W) + 1;
     touched ("Page", "Ch " + juce::String (first) + " - " + juce::String (first + 7));
 }
 
 void MixerView::scrollStrips (int n)
 {
-    const int step = Strip::W + 4;
+    const int step = Strip::W;
     viewport.setViewPosition (juce::jlimit (0, std::max (0, content.getWidth() - viewport.getWidth()), viewport.getViewPositionX() + n * step), 0);
     const int first = viewport.getViewPositionX() / step + 1;
     touched ("Channel", "Ch " + juce::String (first) + " - " + juce::String (first + 7));

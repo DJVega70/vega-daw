@@ -200,13 +200,24 @@ int main()
         check (lpf[2] < flat[2] - 20 && std::abs (lpf[0] - flat[0]) < 1.5f, "filter left = low-pass: 8 kHz " + juce::String (lpf[2] - flat[2], 1) + " dB, bass kept");
         auto hpf = render (0, 0, 0, 0.6f, "hpf");
         check (hpf[0] < flat[0] - 20 && std::abs (hpf[2] - flat[2]) < 1.5f, "filter right = high-pass: 80 Hz " + juce::String (hpf[0] - flat[0], 1) + " dB, highs kept");
+        // tape stage: 15 ips softens the top, keeps the level (unity), thickens the lows a little
+        eq->tapeValue = 1;
+        auto tape15 = render (0, 0, 0, 0, "tape15");
+        eq->tapeValue = 2;
+        auto tape30 = render (0, 0, 0, 0, "tape30");
+        eq->tapeValue = 0;
+        check (tape15[2] < flat[2] - 1.0f && tape30[2] > tape15[2] && std::abs (tape15[1] - flat[1]) < 1.5f && tape15[0] >= flat[0] - 0.5f && tape15[0] < flat[0] + 3.0f,
+               "Tape: 15 ips softens 8 kHz (" + juce::String (tape15[2] - flat[2], 1) + " dB), 30 ips less (" + juce::String (tape30[2] - flat[2], 1)
+               + " dB), 1 kHz level kept (" + juce::String (tape15[1] - flat[1], 1) + " dB), lows " + juce::String (tape15[0] - flat[0], 1) + " dB");
         // settings are saved with the project
+        eq->tapeValue = 2;
         eq->band[2]->setParameter (-12.0f, juce::sendNotificationSync); eq->filter->setParameter (0.4f, juce::sendNotificationSync);
         auto pf = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vega_dj.vegaproj");
         d.saveProjectAs (pf);
         DawSession d2 (engine); d2.openProject (pf);
         auto* eq2 = d2.djEq (*d2.getTracks()[0], false);
         check (eq2 != nullptr && std::abs (eq2->band[2]->getCurrentValue() + 12.0f) < 0.1f && std::abs (eq2->filter->getCurrentValue() - 0.4f) < 0.01f, "DJ EQ and filter settings restored from the project");
+        check (eq2 != nullptr && eq2->tapeValue.get() == 2, "the track's tape setting is restored from the project");
         check (d2.getInsertPlugins (*d2.getTracks()[0]).isEmpty(), "reopened project doesn't get a second DJ EQ");
         int count = 0; for (auto* p : d2.getTracks()[0]->pluginList.getPlugins()) if (dynamic_cast<VegaDJEQPlugin*> (p)) ++count;
         check (count == 1, "exactly one DJ EQ per channel after reopening");

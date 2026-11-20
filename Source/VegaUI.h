@@ -38,6 +38,178 @@ namespace VegaFonts
     }
 }
 
+/** The plug-ins' controls as free painters, so custom components (the DAW's mixer, master section,
+    transport keys) draw exactly what the plug-ins draw. */
+namespace vegapaint
+{
+/** Black knob body + face + white pointer (no ticks). `pointer` tints the pointer (band colours). */
+inline void knob (juce::Graphics& g, juce::Rectangle<float> knobR, float angle, bool big = false,
+                  juce::Colour pointer = juce::Colours::white, bool hover = false)
+{
+    const auto c = knobR.getCentre();
+    const float r = knobR.getWidth() * 0.5f;
+    {
+        juce::Path sh; sh.addEllipse (knobR.translated (0, big ? 5.0f : 3.0f).expanded (big ? 3.0f : 1.5f));
+        juce::DropShadow (juce::Colours::black.withAlpha (0.75f), big ? 18 : 9, {}).drawForPath (g, sh);
+    }
+    if (big)
+    {
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff3b3b3b), c.x, knobR.getY(), juce::Colour (0xff121212), c.x, knobR.getBottom(), false));
+        g.fillEllipse (knobR);
+        g.setColour (juce::Colour (0xff4a4a4a)); g.drawEllipse (knobR.reduced (0.5f), 1.0f);
+        knobR = knobR.reduced (r * 0.13f);
+    }
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff353535), c.x - r * 0.4f, c.y - r * 0.6f, juce::Colour (0xff141414), c.x + r * 0.5f, c.y + r * 0.8f, true));
+    g.fillEllipse (knobR);
+    auto face = knobR.reduced (knobR.getWidth() * 0.06f);
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff2c2c2c), c.x, face.getY(), juce::Colour (0xff1a1a1a), c.x, face.getBottom(), false));
+    g.fillEllipse (face);
+    g.setColour (juce::Colours::white.withAlpha (0.06f)); g.drawEllipse (face, 1.0f);
+    g.setColour (juce::Colours::black.withAlpha (0.6f)); g.drawEllipse (knobR, 1.0f);
+    const float kr = knobR.getWidth() * 0.5f, p1 = big ? kr * 0.68f : kr * 0.35f, p2 = kr * 0.94f;
+    g.setColour (pointer.withAlpha (0.95f));
+    g.drawLine (c.x + p1 * std::sin (angle), c.y - p1 * std::cos (angle), c.x + p2 * std::sin (angle), c.y - p2 * std::cos (angle), big ? 2.6f : 2.0f);
+    if (hover) { g.setColour (VegaColours::accent.withAlpha (0.12f)); g.drawEllipse (knobR.expanded (2.0f), 1.2f); }
+}
+
+/** The 11 tick marks around a knob */
+inline void knobTicks (juce::Graphics& g, juce::Rectangle<float> knobR, float startA, float endA, bool big = false, int n = 11)
+{
+    const auto c = knobR.getCentre(); const float r = knobR.getWidth() * 0.5f;
+    for (int i = 0; i < n; ++i)
+    {
+        const float a = startA + (float) i / (float) (n - 1) * (endA - startA);
+        const bool major = i == 0 || i == n - 1 || (big && i == n / 2);
+        const float r1 = r + (big ? 7.0f : 3.5f), r2 = r1 + (major ? (big ? 7.0f : 5.0f) : (big ? 4.5f : 3.0f));
+        g.setColour (VegaColours::textDim.withAlpha (major ? 0.9f : 0.55f));
+        g.drawLine (c.x + r1 * std::sin (a), c.y - r1 * std::cos (a), c.x + r2 * std::sin (a), c.y - r2 * std::cos (a), big ? 1.6f : 1.1f);
+    }
+}
+
+/** The plug-ins' illuminated square push-button (no label). Lit in `lit` (cyan by default). */
+inline void squareButton (juce::Graphics& g, juce::Rectangle<float> sq, bool on, bool over = false, juce::Colour lit = VegaColours::accent)
+{
+    const float sz = std::min (sq.getWidth(), sq.getHeight());
+    {
+        juce::Path sh; sh.addRoundedRectangle (sq.translated (0, 2), 2.0f);
+        juce::DropShadow (juce::Colours::black.withAlpha (0.7f), 6, {}).drawForPath (g, sh);
+    }
+    g.setColour (juce::Colour (0xff161616)); g.fillRoundedRectangle (sq, 2.0f);
+    auto inner = sq.reduced (sz * 0.14f);
+    if (on)
+    {
+        g.setColour (lit.withAlpha (0.35f)); g.fillRoundedRectangle (sq.expanded (2.0f), 3.0f);
+        g.setColour (lit); g.fillRoundedRectangle (sq.reduced (1.0f), 2.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.6f)); g.fillRoundedRectangle (inner.reduced (sz * 0.12f), 1.5f);
+        g.setColour (lit.brighter (0.4f)); g.drawRoundedRectangle (inner, 1.5f, 1.2f);
+    }
+    else
+    {
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff4a4a4a), inner.getX(), inner.getY(), juce::Colour (0xff262626), inner.getRight(), inner.getBottom(), false));
+        g.fillRoundedRectangle (inner, 1.5f);
+        g.setColour (juce::Colour (0xff5c5c5c)); g.drawRoundedRectangle (inner, 1.5f, 1.0f);
+    }
+    if (over) { g.setColour (juce::Colours::white.withAlpha (0.08f)); g.fillRoundedRectangle (sq, 2.0f); }
+}
+
+/** A wider key in the same style (bezel, grey face, lit face when on). Returns the face for an icon / text. */
+inline juce::Rectangle<float> key (juce::Graphics& g, juce::Rectangle<float> r, bool on, bool over, bool down, juce::Colour lit = VegaColours::accent)
+{
+    {
+        juce::Path sh; sh.addRoundedRectangle (r.translated (0, 2), 2.5f);
+        juce::DropShadow (juce::Colours::black.withAlpha (0.7f), 6, {}).drawForPath (g, sh);
+    }
+    g.setColour (juce::Colour (0xff161616)); g.fillRoundedRectangle (r, 2.5f);
+    auto face = r.reduced (std::min (4.0f, std::min (r.getWidth(), r.getHeight()) * 0.14f));
+    if (on)
+    {
+        g.setColour (lit.withAlpha (0.3f)); g.fillRoundedRectangle (r.expanded (2.0f), 3.5f);
+        g.setGradientFill (juce::ColourGradient (lit.brighter (0.25f), 0, face.getY(), lit.darker (0.1f), 0, face.getBottom(), false));
+        g.fillRoundedRectangle (face, 1.5f);
+    }
+    else
+    {
+        g.setGradientFill (juce::ColourGradient (juce::Colour (down ? 0xff3a3a3a : over ? 0xff545454 : 0xff4a4a4a), face.getX(), face.getY(),
+                                                 juce::Colour (0xff262626), face.getRight(), face.getBottom(), false));
+        g.fillRoundedRectangle (face, 1.5f);
+        g.setColour (juce::Colour (0xff5c5c5c)); g.drawRoundedRectangle (face, 1.5f, 1.0f);
+    }
+    return face;
+}
+inline juce::Colour keyInk (bool on) { return on ? juce::Colour (0xff141414) : VegaColours::text; }
+
+/** The plug-ins' fader: tick marks both sides, thin black slot, dark cap with a white line.
+    `capY` is the cap centre. */
+inline void fader (juce::Graphics& g, juce::Rectangle<float> area, float capY, bool hover = false, float capW = 28.0f, float capH = 16.0f,
+                   juce::Colour line = juce::Colours::white, int ticks = 8)
+{
+    const float cx = area.getCentreX(), top = area.getY() + 8.0f, bottom = area.getBottom() - 8.0f;
+    const float half = capW * 0.5f + 6.0f;
+    for (int i = 0; i <= ticks; ++i)
+    {
+        const float ty = top + (bottom - top) * (float) i / (float) ticks;
+        const bool major = i % 4 == 0;
+        g.setColour (VegaColours::textDim.withAlpha (major ? 0.8f : 0.4f));
+        g.drawLine (cx - half - 9.0f, ty, cx - (major ? half - 3.0f : half - 1.0f), ty, 1.0f);
+        g.drawLine (cx + (major ? half - 3.0f : half - 1.0f), ty, cx + half + 9.0f, ty, 1.0f);
+    }
+    g.setColour (juce::Colour (0xff121212)); g.fillRoundedRectangle (cx - 2.0f, top - 4, 4.0f, bottom - top + 8, 2.0f);
+    g.setColour (juce::Colours::white.withAlpha (0.05f)); g.drawRoundedRectangle (cx - 2.0f, top - 4, 4.0f, bottom - top + 8, 2.0f, 0.8f);
+    auto cap = juce::Rectangle<float> (capW, capH).withCentre ({ cx, capY });
+    juce::Path sh; sh.addRoundedRectangle (cap.translated (0, 3), 2.0f);
+    juce::DropShadow (juce::Colours::black.withAlpha (0.8f), 8, {}).drawForPath (g, sh);
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff5a5a5a), cx, cap.getY(), juce::Colour (0xff222222), cx, cap.getBottom(), false));
+    g.fillRoundedRectangle (cap, 2.0f);
+    g.setColour (juce::Colour (0xff1a1a1a)); g.drawRoundedRectangle (cap, 2.0f, 1.0f);
+    g.setColour (hover ? VegaColours::accent : line);
+    g.drawLine (cap.getX() + 3, cap.getCentreY(), cap.getRight() - 3, cap.getCentreY(), 1.6f);
+}
+
+/** The plug-ins' LED meter column (segments: cyan, white above -18 dB, red at 0). */
+inline void ledColumn (juce::Graphics& g, juce::Rectangle<float> b, float levelDb, float holdDb = -100.0f)
+{
+    static constexpr float segDb[] { 0, -1, -2, -3, -4, -5, -6, -8, -10, -12, -15, -18, -21, -24, -30, -36, -42, -48, -54, -60 };
+    const int n = (int) std::size (segDb);
+    const float segH = b.getHeight() / (float) n;
+    for (int i = 0; i < n; ++i)
+    {
+        auto seg = juce::Rectangle<float> (b.getX(), b.getY() + i * segH, b.getWidth(), segH).reduced (0, segH * 0.18f);
+        const float th = segDb[i];
+        const juce::Colour c = th >= -0.1f ? juce::Colour (0xffff5a5a) : (th > -18.0f ? juce::Colours::white : VegaColours::accent);
+        const bool lit = levelDb >= th;
+        g.setColour (lit ? c : juce::Colour (0xff3a3a3a));
+        g.fillRect (seg);
+        if (! lit && i < n - 1 && holdDb <= th && holdDb > segDb[i + 1]) { g.setColour (c.withAlpha (0.7f)); g.fillRect (seg); }
+    }
+}
+
+/** Black display screen (inserts, readouts) */
+inline void screen (juce::Graphics& g, juce::Rectangle<float> r)
+{
+    g.setColour (juce::Colour (0xff141414)); g.fillRoundedRectangle (r, 3.0f);
+    g.setColour (juce::Colours::black.withAlpha (0.6f)); g.drawRoundedRectangle (r.reduced (0.5f), 3.0f, 1.0f);
+}
+
+/** Combo-box look (dark field, outline, chevron) */
+inline void comboField (juce::Graphics& g, juce::Rectangle<float> r, bool over)
+{
+    g.setColour (juce::Colour (0xff1b1b1b)); g.fillRoundedRectangle (r.reduced (0.5f), 2.0f);
+    g.setColour (VegaColours::line); g.drawRoundedRectangle (r.reduced (0.5f), 2.0f, 1.0f);
+    juce::Path p;
+    const float cx = r.getRight() - 9.0f, cy = r.getCentreY();
+    p.startNewSubPath (cx - 3.5f, cy - 1.5f); p.lineTo (cx, cy + 2.0f); p.lineTo (cx + 3.5f, cy - 1.5f);
+    g.setColour (over ? VegaColours::text : VegaColours::textDim);
+    g.strokePath (p, juce::PathStrokeType (1.2f));
+}
+
+/** Small-caps section title, as in the plug-ins */
+inline void sectionTitle (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& t, juce::Colour c = VegaColours::textDim.withAlpha (0.75f))
+{
+    g.setFont (VegaFonts::ui (9.5f, true)); g.setColour (c);
+    g.drawText (t.toUpperCase(), r, juce::Justification::centred);
+}
+} // namespace vegapaint
+
 class VegaLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
