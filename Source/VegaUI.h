@@ -175,21 +175,85 @@ inline void fader (juce::Graphics& g, juce::Rectangle<float> area, float capY, b
     g.drawLine (cap.getX() + 3, cap.getCentreY(), cap.getRight() - 3, cap.getCentreY(), 1.6f);
 }
 
-/** The plug-ins' LED meter column (segments: cyan, white above -18 dB, red at 0). */
+/** Hardware-style fader (like a control surface's): silver cap with a scooped top and grip ridges,
+    long slot with a printed dB scale. `lit` = the selected channel (cyan cap line + glow). */
+inline void hardwareFader (juce::Graphics& g, juce::Rectangle<float> area, float capY, bool hover, bool lit, float capW = 34.0f, float capH = 44.0f)
+{
+    const float cx = area.getCentreX(), top = area.getY() + capH * 0.5f, bottom = area.getBottom() - capH * 0.5f;
+    // printed scale: ticks on the right, a long major tick every quarter
+    for (int i = 0; i <= 16; ++i)
+    {
+        const float ty = top + (bottom - top) * (float) i / 16.0f;
+        const bool major = i % 4 == 0;
+        g.setColour (VegaColours::textDim.withAlpha (major ? 0.85f : 0.45f));
+        g.drawLine (cx + 6.0f, ty, cx + (major ? 16.0f : 11.0f), ty, 1.0f);
+        g.drawLine (cx - (major ? 16.0f : 11.0f), ty, cx - 6.0f, ty, 1.0f);
+    }
+    // slot
+    auto slot = juce::Rectangle<float> (5.0f, bottom - top + 12.0f).withCentre ({ cx, (top + bottom) * 0.5f });
+    g.setColour (juce::Colour (0xff050505)); g.fillRoundedRectangle (slot, 2.5f);
+    g.setColour (juce::Colours::white.withAlpha (0.07f)); g.drawRoundedRectangle (slot.expanded (0.5f), 2.5f, 0.8f);
+    // cap
+    auto cap = juce::Rectangle<float> (capW, capH).withCentre ({ cx, capY });
+    {
+        juce::Path sh; sh.addRoundedRectangle (cap.translated (0, 5), 4.0f);
+        juce::DropShadow (juce::Colours::black.withAlpha (0.85f), 12, {}).drawForPath (g, sh);
+    }
+    if (lit) { g.setColour (VegaColours::accent.withAlpha (0.28f)); g.fillRoundedRectangle (cap.expanded (4.0f), 6.0f); }
+    // body: light grey plastic, darker skirt at the bottom
+    juce::ColourGradient body (juce::Colour (0xfff2f2f2), cap.getX(), cap.getY(), juce::Colour (0xff8c8c8c), cap.getX(), cap.getBottom(), false);
+    body.addColour (0.45, juce::Colour (0xffd6d6d6));
+    body.addColour (0.55, juce::Colour (0xffbdbdbd));
+    g.setGradientFill (body); g.fillRoundedRectangle (cap, 4.0f);
+    // side shading (rounded edges)
+    g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.25f), cap.getX(), 0, juce::Colours::transparentBlack, cap.getX() + capW * 0.25f, 0, false));
+    g.fillRoundedRectangle (cap, 4.0f);
+    g.setGradientFill (juce::ColourGradient (juce::Colours::transparentBlack, cap.getRight() - capW * 0.25f, 0, juce::Colours::black.withAlpha (0.3f), cap.getRight(), 0, false));
+    g.fillRoundedRectangle (cap, 4.0f);
+    // scooped finger rest: the upper half dips (darker band, light lip)
+    auto scoop = cap.withHeight (capH * 0.42f).reduced (3.0f, 3.0f);
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff9a9a9a), 0, scoop.getY(), juce::Colour (0xffe8e8e8), 0, scoop.getBottom(), false));
+    g.fillRoundedRectangle (scoop, 3.0f);
+    // grip ridges on the lower half
+    for (int k = 0; k < 4; ++k)
+    {
+        const float y = cap.getY() + capH * (0.62f + k * 0.08f);
+        g.setColour (juce::Colours::black.withAlpha (0.28f)); g.drawLine (cap.getX() + 5, y, cap.getRight() - 5, y, 1.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.5f)); g.drawLine (cap.getX() + 5, y + 1, cap.getRight() - 5, y + 1, 0.8f);
+    }
+    // centre line (the value mark)
+    const float my = cap.getY() + capH * 0.5f;
+    g.setColour (lit ? VegaColours::accent.darker (0.3f) : hover ? VegaColours::accent.darker (0.5f) : juce::Colour (0xff1e1e1e));
+    g.fillRect (cap.getX() + 2.0f, my - 1.2f, capW - 4.0f, 2.4f);
+    g.setColour (juce::Colours::black.withAlpha (0.55f)); g.drawRoundedRectangle (cap, 4.0f, 1.0f);
+}
+
+/** The plug-ins' LED meter column (cyan, white above -18 dB, red at 0), with small blocks and a smooth top:
+    the segment the level is inside lights partly, so the meter glides instead of jumping block to block. */
+inline float meterFraction (float db)
+{
+    static constexpr float tDb[] { 6, 0, -6, -12, -18, -24, -30, -42, -60 };
+    static constexpr float tF[]  { 1.0f, 0.9f, 0.78f, 0.66f, 0.54f, 0.42f, 0.31f, 0.16f, 0.0f };
+    if (db >= tDb[0]) return 1.0f;
+    for (int i = 1; i < 9; ++i)
+        if (db >= tDb[i]) return tF[i] + (db - tDb[i]) / (tDb[i - 1] - tDb[i]) * (tF[i - 1] - tF[i]);
+    return 0.0f;
+}
 inline void ledColumn (juce::Graphics& g, juce::Rectangle<float> b, float levelDb, float holdDb = -100.0f)
 {
-    static constexpr float segDb[] { 0, -1, -2, -3, -4, -5, -6, -8, -10, -12, -15, -18, -21, -24, -30, -36, -42, -48, -54, -60 };
-    const int n = (int) std::size (segDb);
+    const int n = std::max (12, (int) (b.getHeight() / 3.6f));
     const float segH = b.getHeight() / (float) n;
+    const float lf = meterFraction (levelDb), hf = meterFraction (holdDb);
+    auto colourAt = [] (float f) { return f >= meterFraction (0.0f) - 0.001f ? juce::Colour (0xffff5a5a) : (f > meterFraction (-18.0f) ? juce::Colours::white : VegaColours::accent); };
     for (int i = 0; i < n; ++i)
     {
-        auto seg = juce::Rectangle<float> (b.getX(), b.getY() + i * segH, b.getWidth(), segH).reduced (0, segH * 0.18f);
-        const float th = segDb[i];
-        const juce::Colour c = th >= -0.1f ? juce::Colour (0xffff5a5a) : (th > -18.0f ? juce::Colours::white : VegaColours::accent);
-        const bool lit = levelDb >= th;
-        g.setColour (lit ? c : juce::Colour (0xff3a3a3a));
-        g.fillRect (seg);
-        if (! lit && i < n - 1 && holdDb <= th && holdDb > segDb[i + 1]) { g.setColour (c.withAlpha (0.7f)); g.fillRect (seg); }
+        const float f0 = (float) (n - 1 - i) / (float) n, f1 = f0 + 1.0f / (float) n;   // this block's range, bottom to top
+        auto seg = juce::Rectangle<float> (b.getX(), b.getY() + i * segH, b.getWidth(), segH).reduced (0, segH * 0.16f);
+        const auto c = colourAt (f1 - 0.5f / n);
+        g.setColour (juce::Colour (0xff333333)); g.fillRect (seg);
+        const float lit = juce::jlimit (0.0f, 1.0f, (lf - f0) * (float) n);
+        if (lit > 0.0f) { g.setColour (c.withAlpha (0.25f + 0.75f * lit)); g.fillRect (seg); }
+        if (holdDb > -99.0f && hf >= f0 && hf < f1 && lf < f0) { g.setColour (c.withAlpha (0.8f)); g.fillRect (seg); }
     }
 }
 

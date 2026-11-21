@@ -56,13 +56,17 @@ public:
         setSliderSnapsToMousePosition (false);
         setPopupDisplayEnabled (true, true, nullptr);
     }
-    static constexpr float capW = 34.0f, capH = 18.0f;
+    static constexpr float capW = 34.0f, capH = 44.0f;
+
     juce::Colour capLine = juce::Colours::white;
     bool lit = false;
     void paint (juce::Graphics& g) override
     {
         // the plug-ins' fader (ticks both sides, thin slot, dark cap with a white line)
-        vegapaint::fader (g, getLocalBounds().toFloat(), (float) getPositionOfValue (getValue()), isMouseOverOrDragging(), capW, capH, capLine, 8, lit);
+        // our own value -> position map, so the tall cap stays inside the slot at both ends
+        auto area = getLocalBounds().toFloat();
+        const float y = juce::jmap ((float) valueToProportionOfLength (getValue()), area.getBottom() - capH * 0.5f, area.getY() + capH * 0.5f);
+        vegapaint::hardwareFader (g, area, y, isMouseOverOrDragging(), lit || capLine != juce::Colours::white, capW, capH);
     }
 };
 
@@ -405,7 +409,7 @@ public:
             for (int c = 0; c < 2; ++c)
             {
                 const float db = client.getAndClearAudioLevel (c).dB;
-                level[c] = std::max (db, level[c] - 1.5f);
+                level[c] = db > level[c] ? level[c] + (db - level[c]) * 0.6f : std::max (db, level[c] - 0.9f);
                 hold[c] = level[c] >= hold[c] ? level[c] : hold[c] - 0.4f;
             }
         // VU: slow (300 ms-ish) ballistics on the louder side
@@ -832,7 +836,8 @@ public:
         repaint();
     }
     // black-and-gold machine: matte black plate and reels, brass rollers / heads / screws, amber counter
-    static inline const juce::Colour gold { 0xffd9b45a }, goldHi { 0xfff3dfa2 }, goldLo { 0xff7a5c22 };
+    // anodised blue metal (was brass): bright edge, mid blue, deep shadow
+    static inline const juce::Colour gold { 0xff5b9be6 }, goldHi { 0xffc4ddff }, goldLo { 0xff163a6a };
     static void brass (juce::Graphics& g, juce::Point<float> c, float rad, bool machined = true)
     {
         {
@@ -875,22 +880,36 @@ public:
         const float tapePx = (float) pos * 38.0f * ipsFactor;
         const float angL = -tapePx / packL, angR = -tapePx / packR;
 
-        // centre column: tape path over brass guides, the head block, capstan + pinch roller
-        const float cx = plate.getCentreX();
-        const juce::Point<float> gl (cx - 26.0f, plate.getBottom() - 46.0f), gr (cx + 26.0f, plate.getBottom() - 46.0f);
-        const juce::Point<float> tl (cx - 16.0f, plate.getY() + 70.0f), tr (cx + 16.0f, plate.getY() + 70.0f);
-        juce::Path tape;
-        tape.startNewSubPath (lc.x + packL * 0.2f, lc.y + packL * 0.98f); tape.lineTo (gl.x - 6, gl.y + 4);
-        tape.lineTo (gr.x + 6, gr.y + 4); tape.lineTo (rc.x - packR * 0.2f, rc.y + packR * 0.98f);
-        g.setColour (juce::Colour (0xff4a3020)); g.strokePath (tape, juce::PathStrokeType (2.4f));
-        auto hb = juce::Rectangle<float> (40.0f, 20.0f).withCentre ({ cx, plate.getBottom() - 34.0f });
+        // centre: head block between two guide rollers; the tape leaves each pack on a true tangent,
+        // wraps under the rollers and runs across the head face
+        const float cx = plate.getCentreX(), rr = 7.5f;
+        const juce::Point<float> gl (cx - 30.0f, plate.getBottom() - 46.0f), gr (cx + 30.0f, plate.getBottom() - 46.0f);
+        auto tangentFrom = [] (juce::Point<float> p, juce::Point<float> c, float rad, bool wantRight)
+        {
+            const auto v = p - c; const float d = v.getDistanceFromOrigin();
+            if (d <= rad + 0.5f) return c;
+            const float base = std::atan2 (v.y, v.x), al = std::acos (rad / d);
+            const juce::Point<float> t1 (c.x + rad * std::cos (base + al), c.y + rad * std::sin (base + al));
+            const juce::Point<float> t2 (c.x + rad * std::cos (base - al), c.y + rad * std::sin (base - al));
+            return (t1.x > t2.x) == wantRight ? t1 : t2;
+        };
+        const juce::Point<float> pl (gl.x - rr, gl.y), pr (gr.x + rr, gr.y);               // outer sides of the rollers
+        const auto tL = tangentFrom (pl, lc, packL, true), tR = tangentFrom (pr, rc, packR, false);
+        auto hb = juce::Rectangle<float> (40.0f, 22.0f).withCentre ({ cx, gl.y + rr + 9.0f });
         juce::ColourGradient hg (goldHi, hb.getX(), hb.getY(), goldLo, hb.getX(), hb.getBottom(), false); hg.addColour (0.45, gold);
         g.setGradientFill (hg); g.fillRoundedRectangle (hb, 3.0f);
         g.setColour (juce::Colour (0xff141414));
-        for (int k = -1; k <= 1; ++k) g.fillRoundedRectangle (juce::Rectangle<float> (8.0f, 9.0f).withCentre ({ hb.getCentreX() + k * 11.0f, hb.getY() + 6.0f }), 1.5f);
-        brass (g, gl, 7.5f); brass (g, gr, 7.5f);
-        brass (g, tl, 9.0f); brass (g, tr, 9.0f);       // tension arms' rollers
-        brass (g, { cx, plate.getY() + 104.0f }, 13.0f);  // capstan / flywheel cap
+        for (int k = -1; k <= 1; ++k) g.fillRoundedRectangle (juce::Rectangle<float> (8.0f, 8.0f).withCentre ({ hb.getCentreX() + k * 11.0f, hb.getY() + 5.0f }), 1.5f);
+        brass (g, gl, rr); brass (g, gr, rr);
+        brass (g, { cx, plate.getY() + 96.0f }, 13.0f);  // capstan flywheel cap
+        juce::Path tape;
+        tape.startNewSubPath (tL); tape.lineTo (pl);
+        tape.addCentredArc (gl.x, gl.y, rr, rr, 0, juce::MathConstants<float>::pi * 1.5f, juce::MathConstants<float>::pi, false);
+        tape.lineTo (gr.x, gr.y + rr);
+        tape.addCentredArc (gr.x, gr.y, rr, rr, 0, juce::MathConstants<float>::pi, juce::MathConstants<float>::pi * 0.5f, false);
+        tape.lineTo (tR);
+        g.setColour (juce::Colour (0xff3a2416)); g.strokePath (tape, juce::PathStrokeType (2.6f));
+        g.setColour (juce::Colour (0xff7a5236).withAlpha (0.6f)); g.strokePath (tape, juce::PathStrokeType (0.8f));   // oxide sheen
 
         drawReel (g, lc, reelR, hubR, packL, angL, "1");
         drawReel (g, rc, reelR, hubR, packR, angR, "2");
@@ -938,10 +957,17 @@ private:
     static void drawReel (juce::Graphics& g, juce::Point<float> c, float r, float hubR, float pack, float ang, const juce::String& number)
     {
         // brown tape pack, seen through the cut-outs
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff8a6446), c.x - pack, c.y - pack, juce::Colour (0xff3e271a), c.x + pack, c.y + pack, false));
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff5e4030), c.x - pack, c.y - pack, juce::Colour (0xff24150c), c.x + pack, c.y + pack, false));
         g.fillEllipse (c.x - pack, c.y - pack, pack * 2, pack * 2);
-        for (float rr = hubR * 1.1f; rr < pack; rr += 2.2f)
-        { g.setColour (juce::Colours::black.withAlpha (0.14f)); g.drawEllipse (c.x - rr, c.y - rr, rr * 2, rr * 2, 0.5f); }
+        for (float rr = hubR * 1.1f; rr < pack; rr += 1.7f)
+        { g.setColour (juce::Colours::black.withAlpha (((int) (rr * 7.0f)) % 3 == 0 ? 0.2f : 0.09f)); g.drawEllipse (c.x - rr, c.y - rr, rr * 2, rr * 2, 0.5f); }
+        {   // the glossy back-coated tape catches the light in a band
+            juce::Path sheen; sheen.addPieSegment (c.x - pack, c.y - pack, pack * 2, pack * 2, -0.9f, -0.2f, hubR * 1.1f / pack);
+            g.setColour (juce::Colours::white.withAlpha (0.09f)); g.fillPath (sheen);
+            juce::Path sheen2; sheen2.addPieSegment (c.x - pack, c.y - pack, pack * 2, pack * 2, 2.25f, 2.95f, hubR * 1.1f / pack);
+            g.setColour (juce::Colours::white.withAlpha (0.06f)); g.fillPath (sheen2);
+        }
+        g.setColour (juce::Colours::black.withAlpha (0.5f)); g.drawEllipse (c.x - pack, c.y - pack, pack * 2, pack * 2, 1.0f);
         // matte black flange with three rounded trapezoid windows, turning with the reel
         juce::Path flange; flange.addEllipse (c.x - r, c.y - r, r * 2, r * 2);
         juce::Path windows;
@@ -959,10 +985,22 @@ private:
             juce::Path sh; sh.addEllipse (c.x - r, c.y - r + 4, r * 2, r * 2);
             juce::DropShadow (juce::Colours::black.withAlpha (0.75f), 12, {}).drawForPath (g, sh);
         }
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff2a2a2a), c.x - r, c.y - r, juce::Colour (0xff111111), c.x + r, c.y + r, false));
-        g.fillPath (flange);
-        g.setColour (juce::Colours::white.withAlpha (0.07f)); g.drawEllipse (c.x - r + 1, c.y - r + 1, r * 2 - 2, r * 2 - 2, 1.0f);
-        g.setColour (juce::Colours::black.withAlpha (0.6f)); g.strokePath (windows, juce::PathStrokeType (1.0f));
+        // satin black metal: soft light from the top-left, a lighter bevelled rim
+        juce::ColourGradient fg (juce::Colour (0xff3a3a3c), c.x - r * 0.7f, c.y - r * 0.8f, juce::Colour (0xff0c0c0d), c.x + r * 0.8f, c.y + r * 0.9f, false);
+        fg.addColour (0.5, juce::Colour (0xff1c1c1e));
+        g.setGradientFill (fg); g.fillPath (flange);
+        {   // broad satin sheen band
+            juce::Graphics::ScopedSaveState ss (g);
+            g.reduceClipRegion (flange);
+            juce::Path band; band.addEllipse (c.x - r * 1.4f, c.y - r * 1.6f, r * 1.6f, r * 1.9f);
+            g.setColour (juce::Colours::white.withAlpha (0.045f)); g.fillPath (band);
+            // window edges: lit on the upper-left side, shadowed lower-right (pressed metal)
+            g.setColour (juce::Colours::white.withAlpha (0.12f)); g.strokePath (windows, juce::PathStrokeType (1.2f), juce::AffineTransform::translation (-0.6f, -0.6f));
+            g.setColour (juce::Colours::black.withAlpha (0.7f)); g.strokePath (windows, juce::PathStrokeType (1.2f), juce::AffineTransform::translation (0.7f, 0.7f));
+        }
+        g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.22f), c.x - r, c.y - r, juce::Colours::white.withAlpha (0.02f), c.x + r, c.y + r, false));
+        g.drawEllipse (c.x - r + 1.5f, c.y - r + 1.5f, r * 2 - 3, r * 2 - 3, 2.0f);                // rim bevel
+        g.setColour (juce::Colours::black.withAlpha (0.8f)); g.drawEllipse (c.x - r, c.y - r, r * 2, r * 2, 1.0f);
         // gold name + number on the flange (turns with it)
         {
             juce::Graphics::ScopedSaveState ss (g);
@@ -1012,24 +1050,47 @@ class GoldKnob : public xl::Knob
 public:
     void paint (juce::Graphics& g) override
     {
+        // like a control surface's jog knob: knurled chrome ring, matte black cap with a finger dimple, blue ticks
         const auto rp = getRotaryParameters();
         auto b = getLocalBounds().toFloat();
         const float rad = std::min (b.getWidth(), b.getHeight() - 4.0f) * 0.5f - 8.0f;
         const auto c = b.getCentre().translated (0, -2.0f);
         const float a = rp.startAngleRadians + (float) valueToProportionOfLength (getValue()) * (rp.endAngleRadians - rp.startAngleRadians);
-        // black skirt + gold ticks
-        g.setColour (juce::Colour (0xff0a0a0a)); g.fillEllipse (c.x - rad - 5, c.y - rad - 5, (rad + 5) * 2, (rad + 5) * 2);
         const int n = getInterval() >= 1.0 ? (int) std::round ((getMaximum() - getMinimum()) / getInterval()) + 1 : 11;
         for (int i = 0; i < n; ++i)
         {
             const float t = rp.startAngleRadians + (float) i / (float) (n - 1) * (rp.endAngleRadians - rp.startAngleRadians);
-            g.setColour (TapeDeck::gold.withAlpha (i == 0 || i == n - 1 ? 1.0f : 0.7f));
-            g.drawLine (c.x + std::sin (t) * (rad + 6), c.y - std::cos (t) * (rad + 6), c.x + std::sin (t) * (rad + 10), c.y - std::cos (t) * (rad + 10), 1.2f);
+            g.setColour (TapeDeck::gold.withAlpha (i == 0 || i == n - 1 ? 1.0f : 0.65f));
+            g.drawLine (c.x + std::sin (t) * (rad + 4), c.y - std::cos (t) * (rad + 4), c.x + std::sin (t) * (rad + 8), c.y - std::cos (t) * (rad + 8), 1.2f);
         }
-        TapeDeck::brass (g, c, rad);
-        g.setColour (juce::Colour (0xff1a1206));
-        g.drawLine (c.x + std::sin (a) * rad * 0.3f, c.y - std::cos (a) * rad * 0.3f, c.x + std::sin (a) * rad * 0.92f, c.y - std::cos (a) * rad * 0.92f, 2.2f);
-        if (isMouseOverOrDragging()) { g.setColour (juce::Colours::white.withAlpha (0.08f)); g.fillEllipse (c.x - rad, c.y - rad, rad * 2, rad * 2); }
+        {
+            juce::Path sh; sh.addEllipse (c.x - rad, c.y - rad + 3, rad * 2, rad * 2);
+            juce::DropShadow (juce::Colours::black.withAlpha (0.8f), 9, {}).drawForPath (g, sh);
+        }
+        // chrome ring with knurling (fine dark/light lines all round)
+        juce::ColourGradient chrome (juce::Colour (0xfff4f4f4), c.x, c.y - rad, juce::Colour (0xff6e6e6e), c.x, c.y + rad, false);
+        chrome.addColour (0.35, juce::Colour (0xffb0b0b0)); chrome.addColour (0.6, juce::Colour (0xffe6e6e6));
+        g.setGradientFill (chrome); g.fillEllipse (c.x - rad, c.y - rad, rad * 2, rad * 2);
+        for (int k = 0; k < 72; ++k)
+        {
+            const float t = k * juce::MathConstants<float>::twoPi / 72.0f;
+            g.setColour (juce::Colours::black.withAlpha (k % 2 ? 0.22f : 0.08f));
+            g.drawLine (c.x + std::sin (t) * rad * 0.8f, c.y - std::cos (t) * rad * 0.8f, c.x + std::sin (t) * rad, c.y - std::cos (t) * rad, 0.9f);
+        }
+        g.setColour (juce::Colours::black.withAlpha (0.6f)); g.drawEllipse (c.x - rad, c.y - rad, rad * 2, rad * 2, 1.0f);
+        // black cap
+        const float cr = rad * 0.78f;
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff2e2e30), c.x - cr * 0.5f, c.y - cr, juce::Colour (0xff0b0b0c), c.x + cr * 0.5f, c.y + cr, false));
+        g.fillEllipse (c.x - cr, c.y - cr, cr * 2, cr * 2);
+        g.setColour (juce::Colours::white.withAlpha (0.08f)); g.drawEllipse (c.x - cr + 1, c.y - cr + 1, cr * 2 - 2, cr * 2 - 2, 1.0f);
+        // finger dimple shows the position, with a blue index mark at the rim
+        const juce::Point<float> d (c.x + std::sin (a) * cr * 0.55f, c.y - std::cos (a) * cr * 0.55f);
+        const float dr = cr * 0.24f;
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff050505), d.x, d.y - dr, juce::Colour (0xff3a3a3a), d.x, d.y + dr, false));
+        g.fillEllipse (d.x - dr, d.y - dr, dr * 2, dr * 2);
+        g.setColour (TapeDeck::gold);
+        g.drawLine (c.x + std::sin (a) * cr * 0.84f, c.y - std::cos (a) * cr * 0.84f, c.x + std::sin (a) * cr * 0.98f, c.y - std::cos (a) * cr * 0.98f, 2.2f);
+        if (isMouseOverOrDragging()) { g.setColour (TapeDeck::gold.withAlpha (0.2f)); g.drawEllipse (c.x - rad - 1, c.y - rad - 1, rad * 2 + 2, rad * 2 + 2, 2.0f); }
     }
 };
 } // namespace tp
@@ -1594,7 +1655,7 @@ private:
     uf::TransportKey rew { uf::TransportKey::rew }, ffwd { uf::TransportKey::ffwd }, stop { uf::TransportKey::stop }, play { uf::TransportKey::play }, rec { uf::TransportKey::rec };
     tp::Jog jog; tp::TapeDeck deck;
     tp::GoldKnob tapeKnob[3];
-    cs::SqButton tapeOn { "On", VegaColours::accent }, tapeBypass { "Bypass", VegaColours::gold };
+    cs::SqButton tapeOn { "On", VegaColours::accent }, tapeBypass { "Bypass", tp::TapeDeck::gold };
     cs::ComboButton tapePreset;
     juce::TextButton tapeDel { "DELETE" }, tapeRen { "RENAME" }, tapeSave { "SAVE" };
     VegaTapeMachinePlugin* tape() { return vs.session.masterTape(); }
@@ -1677,7 +1738,7 @@ MixerView::MixerView (ViewState& v) : vs (v)
     detachBtn.onClick = [this] { if (onDetach) onDetach(); };
     addAndMakeVisible (detachBtn);
     rebuild();
-    startTimerHz (25);
+    startTimerHz (40);
 }
 MixerView::~MixerView() { clearAll(); }
 void MixerView::clearAll() { strips.clear(); master.reset(); if (panel != nullptr) panel->forgetEdit(); lastEdit = nullptr; lastLayout.clear(); }
