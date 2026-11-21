@@ -155,6 +155,16 @@ int main()
         sent.clear(); hui.updateFeedback();
         check (sent.empty(), "HUI feedback only sends changes (" + juce::String ((int) sent.size()) + " msgs when idle)");
     }
+    {   // master tape machine (the reel-to-reel)
+        DawSession d (engine);
+        auto* tp = d.masterTape (false);
+        check (tp != nullptr && ! tp->isEnabled() && d.edit().getMasterPluginList().indexOf (tp) < d.edit().getMasterPluginList().indexOf (d.masterStrip (false)),
+               "master tape machine is there, bypassed, before the master strip");
+        auto presets = VegaTapeMachinePlugin::presets();
+        tp->apply (presets[2]);
+        check (std::abs (tp->ips->getCurrentValue() - 0.0f) < 0.01f && std::abs (tp->drive->getCurrentValue() - 0.7f) < 0.01f && tp->presetName.get() == presets[2].name,
+               "tape preset sets DRIVE / IPS / CAL (" + presets[2].name + ")");
+    }
     {   // FL-style snapping: "Line" follows the zoom, Bar snaps to whole bars (it used to switch snapping off)
         DawSession d (engine);
         ViewState v (d);

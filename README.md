@@ -125,6 +125,8 @@ First run: **Options > Audio / MIDI settings** (pick ASIO / WASAPI on Windows, C
 
 **Piano roll** — add / move / resize / delete notes, velocity lane, grid incl. triplets, quantise, note audition.
 
+**Tape machine (Vega Tape 2T)** - the reel-to-reel on the mixer's control panel is a tape machine on the master bus. Its reels turn with the song, and dragging a reel moves the playhead. **DRIVE** sets how hard the mix hits the tape, **IPS** sets the speed (7.5 darker and fatter, 15 warm, 30 clean), and **CAL** trims the output. **On / Bypass** switch it in and out; it starts bypassed. **PRESET** has five Vega presets, and **SAVE / RENAME / DELETE** manage your own.
+
 **Floating windows** — the mixer and the piano roll each have a **DETACH** button (also in the Track menu). Detached, they float in their own window, which you can put on a second screen, and stay above the DAW while you work. **DOCK** puts them back. Closing a floating window just hides it: Tab brings the mixer back, and double-clicking a clip brings the piano roll back. The DAW remembers which views float and where.
 
 **Mixer** — channel strips with inserts (VST3/AU or built-ins: EQ, compressor, reverb, delay, chorus, phaser, filter, pitch shift), plugin bypass/re-order, **aux sends** to buses, **output routing** of tracks into buses, **sidechain inputs** for plugins that support them, pan, fader, meters, mute/solo, master.

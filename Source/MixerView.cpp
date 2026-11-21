@@ -855,7 +855,7 @@ public:
         const float packL = (float) std::sqrt (packMin * packMin + (packMax * packMax - packMin * packMin) * (1.0 - f));
         const float packR = (float) std::sqrt (packMin * packMin + (packMax * packMax - packMin * packMin) * f);
         // constant tape speed: each reel turns faster as its pack gets smaller
-        const float tapePx = (float) pos * 38.0f;
+        const float tapePx = (float) pos * 38.0f * ipsFactor;
         const float angL = -tapePx / packL, angR = -tapePx / packR;
 
         // tape path: supply pack -> guide -> heads -> capstan -> guide -> take-up pack
@@ -899,7 +899,8 @@ public:
         lamp (plate.getCentreX() + 18.0f, "REC", recording, juce::Colour (0xffff5a5a));
         g.setColour (VegaColours::textDim); g.setFont (VegaFonts::ui (9.0f, true));
         g.drawText ("VEGA TAPE 2T", plate.reduced (12.0f, 8.0f), juce::Justification::topLeft);
-        g.drawText ("15 / 30 IPS", plate.reduced (12.0f, 8.0f), juce::Justification::topRight);
+        g.setColour (on ? VegaColours::accent : VegaColours::textDim);
+        g.drawText (on ? ipsText : juce::String ("BYPASSED"), plate.reduced (12.0f, 8.0f), juce::Justification::topRight);
         reelCentres[0] = lc; reelCentres[1] = rc; reelRadius = reelR;
     }
     void mouseDown (const juce::MouseEvent& e) override { lastAngle = angleAt (e.position); lastY = e.position.y; if (onTouch) onTouch (true); }
@@ -964,6 +965,9 @@ private:
     juce::Point<float> nearestReel (juce::Point<float> p) const { return p.getDistanceFrom (reelCentres[0]) < p.getDistanceFrom (reelCentres[1]) ? reelCentres[0] : reelCentres[1]; }
     float angleAt (juce::Point<float> p) const { const auto c = nearestReel (p); return std::atan2 (p.x - c.x, c.y - p.y); }
     double pos = 0, length = 60; bool playing = false, recording = false; juce::String counter { "1.1.1" };
+public:
+    float ipsFactor = 1.0f; bool on = true; juce::String ipsText { "15 IPS" };
+private:
     juce::Point<float> reelCentres[2]; float reelRadius = 60.0f;
     float lastAngle = 0, lastY = 0;
 };
@@ -1119,13 +1123,12 @@ public:
             enc[i].onDelta = [this, i] (double d) { encoderMoved (i, d); };
             enc[i].onReset = [this, i] { encoderReset (i); };
         }
-        canvas.addAndMakeVisible (channel); channel.setBounds (62, 432, 96, 96);
+        // (CHANNEL, MODE, 5-8, BANK, LAYER, SCRUB and the arrows gave their place to the tape machine)
         channel.onDelta = [this] (double d) { chanAcc += d * 12.0; while (chanAcc >= 1) { owner.selectNeighbour (1); chanAcc -= 1; } while (chanAcc <= -1) { owner.selectNeighbour (-1); chanAcc += 1; } };
         channel.setTooltip ("CHANNEL: turn to select tracks");
 
         auto key = [this] (uf::Key& k, int x, int y, int w = 40, int h = 34) { canvas.addAndMakeVisible (k); k.setBounds (x, y, w, h); };
-        key (mode, 232, 424); key (page58, 282, 424); key (chanL, 332, 424); key (chanR, 382, 424);
-        key (bankL, 232, 482); key (bankR, 282, 482); key (layer, 332, 482); key (scrub, 382, 482);
+
         mode.setClickingTogglesState (true); page58.setClickingTogglesState (true); layer.setClickingTogglesState (true); scrub.setClickingTogglesState (true);
         mode.setTooltip ("MODE: the arrow keys zoom instead of moving"); page58.setTooltip ("5-8: encoders control HI / MID / LOW / master volume");
         chanL.setTooltip ("Shift the mixer by one channel"); chanR.setTooltip ("Shift the mixer by one channel");
@@ -1148,10 +1151,43 @@ public:
         navUp.setTooltip ("Previous track (MODE: taller tracks)"); navDown.setTooltip ("Next track (MODE: shorter tracks)");
         navLeft.setTooltip ("Back one bar (MODE: zoom out)"); navRight.setTooltip ("Forward one bar (MODE: zoom in)");
         navDot.setTooltip ("Drop a marker at the playhead (or remove the one there)");
-        canvas.addAndMakeVisible (deck); deck.setBounds (28, 552, 412, 196);
+        // ---- the master tape machine: reels + DRIVE / IPS / CAL, On / Bypass, presets
+        canvas.addAndMakeVisible (deck); deck.setBounds (28, 412, 412, 198);
         deck.onTurn = [this] (double t) { jogTurn (t); };
-        deck.onTouch = [this] (bool d) { if (scrub.getToggleState()) vs.edit().getTransport().setUserDragging (d); };
-        deck.setTooltip ("Tape: drag a reel (or use the wheel) to move the playhead - with SCRUB lit you hear the audio as you drag");
+        deck.onTouch = [this] (bool d) { if (! vs.edit().getTransport().isPlaying()) vs.edit().getTransport().setUserDragging (d); };
+        deck.setTooltip ("Vega Tape 2T on the master bus. Drag a reel (or use the wheel) to move the playhead - stopped, you hear the tape scrub.");
+        static const char* tapeNames[] { "Drive", "IPS", "Cal" };
+        for (int i = 0; i < 3; ++i)
+        {
+            auto& k = tapeKnob[i];
+            k.getProperties().set ("big", true);
+            canvas.addAndMakeVisible (k); k.setBounds (34 + i * 74, 616, 74, 70);
+            k.onValueChange = [this, i]
+            {
+                if (auto* tp = tape()) { (i == 0 ? tp->drive : i == 1 ? tp->ips : tp->cal)->setParameter ((float) tapeKnob[i].getValue(), juce::sendNotification); }
+                owner.touched (juce::String ("Tape ") + tapeNames[i], tapeKnob[i].getTextFromValue (tapeKnob[i].getValue()));
+            };
+        }
+        tapeKnob[0].setRange (0.0, 1.0, 0.01); tapeKnob[0].setDoubleClickReturnValue (true, 0.35);
+        tapeKnob[0].textFromValueFunction = [] (double v) { return juce::String (juce::roundToInt (v * 100)) + "%"; };
+        tapeKnob[1].setRange (0.0, 2.0, 1.0); tapeKnob[1].setDoubleClickReturnValue (true, 1.0);
+        tapeKnob[1].textFromValueFunction = [] (double v) { return VegaTapeMachinePlugin::ipsName ((float) v); };
+        tapeKnob[2].setRange (-6.0, 6.0, 0.1); tapeKnob[2].setDoubleClickReturnValue (true, 0.0);
+        tapeKnob[2].textFromValueFunction = [] (double v) { return (v >= 0 ? "+" : "") + juce::String (v, 1) + " dB"; };
+        tapeKnob[0].setTooltip ("DRIVE: how hard the mix hits the tape (saturation and glue)");
+        tapeKnob[1].setTooltip ("IPS: tape speed - 7.5 is darker and fatter, 15 warm, 30 clean and open");
+        tapeKnob[2].setTooltip ("CAL: output calibration trim");
+        for (auto* b : { &tapeOn, &tapeBypass }) canvas.addAndMakeVisible (b);
+        tapeOn.setBounds (278, 616, 44, 40); tapeBypass.setBounds (330, 616, 50, 40);
+        tapeOn.onClick = [this] { if (auto* tp = tape()) { tp->setEnabled (true); owner.touched ("Tape", "On"); } };
+        tapeBypass.onClick = [this] { if (auto* tp = tape()) { tp->setEnabled (false); owner.touched ("Tape", "Bypassed"); } };
+        tapeOn.setTooltip ("Tape machine on (master bus)"); tapeBypass.setTooltip ("Bypass the tape machine");
+        canvas.addAndMakeVisible (tapePreset); tapePreset.setBounds (270, 680, 166, 22);
+        tapePreset.onClick = [this] { presetMenu(); }; tapePreset.setTooltip ("Tape presets");
+        for (auto* b : { &tapeDel, &tapeRen, &tapeSave }) { canvas.addAndMakeVisible (b); }
+        tapeDel.setBounds (268, 708, 54, 24); tapeRen.setBounds (325, 708, 56, 24); tapeSave.setBounds (384, 708, 54, 24);
+        tapeSave.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffd0d0d0));
+        tapeDel.onClick = [this] { deletePreset(); }; tapeRen.onClick = [this] { renamePreset(); }; tapeSave.onClick = [this] { savePreset(); };
 
         // automation / function row
         juce::Button* row[] { &autoOff, &autoRead, &autoWrite, &cycle, &click, &drop, &shiftKey };
@@ -1342,6 +1378,16 @@ private:
                 if (current[c] > peak[c]) peak[c] = current[c];
             }
         }
+        if (auto* tp = tape())
+        {
+            const float vals[] { tp->drive->getCurrentValue(), tp->ips->getCurrentValue(), tp->cal->getCurrentValue() };
+            for (int i = 0; i < 3; ++i) if (! tapeKnob[i].isMouseButtonDown() && std::abs (tapeKnob[i].getValue() - vals[i]) > 0.001) tapeKnob[i].setValue (vals[i], juce::dontSendNotification);
+            set (tapeOn, tp->isEnabled()); set (tapeBypass, ! tp->isEnabled());
+            if (tapePreset.getButtonText() != tp->presetName.get()) tapePreset.setButtonText (tp->presetName.get());
+            const int sp = juce::jlimit (0, 2, juce::roundToInt (tp->ips->getCurrentValue()));
+            deck.ipsFactor = sp == 0 ? 0.5f : sp == 1 ? 1.0f : 2.0f;
+            deck.ipsText = VegaTapeMachinePlugin::ipsName ((float) sp).toUpperCase(); deck.on = tp->isEnabled();
+        }
         {
             const double len = vs.edit().getLength().inSeconds();
             deck.update (t.getPosition().inSeconds(), len, t.isPlaying(), t.isRecording(), dawui::formatBarsBeats (vs.edit(), t.getPosition()));
@@ -1406,21 +1452,12 @@ private:
         g.setColour (juce::Colour (0xff3a3c40));
         for (int i = 1; i < 4; ++i) g.fillRect ((float) encX (i) - 49, bar.getY() + 3, 1.0f, bar.getHeight() - 6);
         // labels + channel arcs
-        g.setColour (console::ink); g.setFont (VegaFonts::ui (12.0f, true));
-        g.drawText ("CHANNEL", 50, 536, 120, 16, juce::Justification::centred);
-        {
-            juce::Path arc; arc.addCentredArc (110, 480, 62, 62, 0, -2.4f, -0.5f, true);
-            juce::Path arc2; arc2.addCentredArc (110, 480, 62, 62, 0, 0.5f, 2.4f, true);
-            g.strokePath (arc, juce::PathStrokeType (1.6f)); g.strokePath (arc2, juce::PathStrokeType (1.6f));
-            g.fillEllipse (110 - 62 * std::sin (2.4f) - 3, 480 + 62 * std::cos (2.4f) - 3, 6, 6);
-            g.fillEllipse (110 + 62 * std::sin (2.4f) - 3, 480 + 62 * std::cos (2.4f) - 3, 6, 6);
-        }
-        g.setFont (VegaFonts::ui (11.0f, true));
-        g.drawText ("BANK", 232, 518, 90, 14, juce::Justification::centred);
-        g.drawText ("LAYER", 332, 518, 40, 14, juce::Justification::centred);
-        g.drawText ("SCRUB", 376, 518, 52, 14, juce::Justification::centred);
-        g.setColour (console::line); g.fillRect (232.0f, 468.0f, 190.0f, 2.0f); g.setColour (console::ink);
-        g.drawLine (240, 532, 252, 532, 1.2f); g.drawLine (302, 532, 314, 532, 1.2f);
+        // tape machine captions
+        g.setFont (VegaFonts::ui (10.5f, true)); g.setColour (console::inkDim);
+        static const char* tn[] { "DRIVE", "IPS", "CAL" };
+        for (int k = 0; k < 3; ++k) g.drawText (tn[k], 34 + k * 74, 686, 74, 12, juce::Justification::centred);
+        g.drawText ("PRESET", 270, 664, 100, 14, juce::Justification::centredLeft);
+        g.setColour (console::line); g.fillRect (262.0f, 618.0f, 1.0f, 112.0f);
 
         // function row labels
         static const char* fn[] { "OFF", "READ", "WRT", "CYCLE", "CLICK", "DROP", "SHIFT" };
@@ -1496,6 +1533,71 @@ private:
             shiftKey { uf::Key::shiftUp, {}, juce::Colour (0xffffd98a), false };
     uf::TransportKey rew { uf::TransportKey::rew }, ffwd { uf::TransportKey::ffwd }, stop { uf::TransportKey::stop }, play { uf::TransportKey::play }, rec { uf::TransportKey::rec };
     tp::Jog jog; tp::TapeDeck deck;
+    xl::Knob tapeKnob[3];
+    cs::SqButton tapeOn { "On", VegaColours::accent }, tapeBypass { "Bypass", VegaColours::gold };
+    cs::ComboButton tapePreset;
+    juce::TextButton tapeDel { "DELETE" }, tapeRen { "RENAME" }, tapeSave { "SAVE" };
+    VegaTapeMachinePlugin* tape() { return vs.session.masterTape(); }
+    void presetMenu()
+    {
+        auto list = VegaTapeMachinePlugin::presets();
+        juce::PopupMenu m;
+        m.addSectionHeader ("Vega presets");
+        for (int i = 0; i < list.size(); ++i)
+        {
+            if (i > 0 && ! list[i].builtIn && list[i - 1].builtIn) m.addSectionHeader ("Your presets");
+            m.addItem (i + 1, list[i].name, true, tape() != nullptr && tape()->presetName.get() == list[i].name);
+        }
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&tapePreset), [this, list] (int r)
+        {
+            if (r < 1) return;
+            if (auto* tp = tape()) { tp->apply (list[r - 1]); tp->setEnabled (true); owner.touched ("Tape preset", list[r - 1].name); }
+        });
+    }
+    void askName (const juce::String& title, const juce::String& start, std::function<void (juce::String)> done)
+    {
+        auto* w = new juce::AlertWindow (title, "Name:", juce::MessageBoxIconType::NoIcon);
+        w->addTextEditor ("name", start); w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey)); w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        w->enterModalState (true, juce::ModalCallbackFunction::create ([w, done] (int r)
+        {
+            const auto n = w->getTextEditorContents ("name").trim();
+            if (r == 1 && n.isNotEmpty()) done (n);
+        }), true);
+    }
+    bool currentIsUser (juce::String& name)
+    {
+        auto* tp = tape(); if (tp == nullptr) return false;
+        name = tp->presetName.get();
+        for (auto& p : VegaTapeMachinePlugin::presets()) if (p.name == name) return ! p.builtIn;
+        return false;
+    }
+    void savePreset()
+    {
+        juce::String cur; const bool user = currentIsUser (cur);
+        askName ("Save tape preset", user ? cur : juce::String ("My Tape"), [this] (juce::String n) { if (auto* tp = tape()) { tp->saveAs (n); owner.touched ("Tape preset saved", n); } });
+    }
+    void deletePreset()
+    {
+        juce::String cur;
+        if (! currentIsUser (cur)) { owner.touched ("Tape", "Vega presets can't be deleted"); return; }
+        auto all = VegaTapeMachinePlugin::presets();
+        for (int i = all.size(); --i >= 0;) if (! all[i].builtIn && all[i].name == cur) all.remove (i);
+        VegaTapeMachinePlugin::writeUserPresets (all);
+        if (auto* tp = tape()) tp->presetName = "Custom";
+        owner.touched ("Tape preset deleted", cur);
+    }
+    void renamePreset()
+    {
+        juce::String cur;
+        if (! currentIsUser (cur)) { owner.touched ("Tape", "Save it as your own preset first"); return; }
+        askName ("Rename tape preset", cur, [this, cur] (juce::String n)
+        {
+            auto all = VegaTapeMachinePlugin::presets();
+            for (auto& p : all) if (! p.builtIn && p.name == cur) p.name = n;
+            VegaTapeMachinePlugin::writeUserPresets (all);
+            if (auto* tp = tape()) tp->presetName = n;
+        });
+    }
     juce::String line1 { "Vega Productions" }, line2 { "Mixer" };
     float vuRef = -18.0f, vuDb[2] { -25, -25 }, current[2] { -100, -100 }, peak[2] { -100, -100 };
     double chanAcc = 0; int holdTicks[2] {}; bool held = false;

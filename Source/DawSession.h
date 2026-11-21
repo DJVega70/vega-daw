@@ -2,6 +2,7 @@
 #include <tracktion_engine/tracktion_engine.h>
 #include "DJEQPlugin.h"
 #include "MasterStripPlugin.h"
+#include "TapeMachinePlugin.h"
 
 namespace te = tracktion;
 using namespace std::literals;
@@ -65,7 +66,8 @@ public:
     te::Plugin::Ptr setInstrument (te::AudioTrack&, const juce::String& type, const juce::PluginDescription* desc = nullptr);
     juce::Array<te::Plugin*> getInsertPlugins (te::AudioTrack&) const;
     VegaDJEQPlugin* djEq (te::AudioTrack&, bool create = true);
-    VegaMasterStripPlugin* masterStrip (bool create = true);               // EQ / dynamics on the master bus            // the channel's DJ EQ / filter (always present, sits before the fader)      // user plugins, excludes volume/meter/aux
+    VegaMasterStripPlugin* masterStrip (bool create = true);
+    VegaTapeMachinePlugin* masterTape (bool create = true);                // the reel-to-reel on the master bus (before the master strip)               // EQ / dynamics on the master bus            // the channel's DJ EQ / filter (always present, sits before the fader)      // user plugins, excludes volume/meter/aux
     static juce::StringArray builtInEffectTypes();
     static juce::String builtInDisplayName (const juce::String& type);
 

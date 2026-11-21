@@ -11,7 +11,7 @@ DawSession::DawSession (te::Engine& e) : engine (e)
     static std::set<te::Engine*> registered;   // built-in types must be registered once per engine, before any edit loads
     // control surfaces (Mackie MCU...) see the DAW's audio / instrument / bus tracks, in order
     e.getExternalControllerManager().isVisibleOnControlSurface = [] (const te::Track& t) { return dynamic_cast<const te::AudioTrack*> (&t) != nullptr; };
-    if (registered.insert (&e).second) { e.getPluginManager().createBuiltInType<VegaDJEQPlugin>(); e.getPluginManager().createBuiltInType<VegaMasterStripPlugin>(); }
+    if (registered.insert (&e).second) { e.getPluginManager().createBuiltInType<VegaDJEQPlugin>(); e.getPluginManager().createBuiltInType<VegaMasterStripPlugin>(); e.getPluginManager().createBuiltInType<VegaTapeMachinePlugin>(); }
     newProject();
 }
 
@@ -24,6 +24,18 @@ VegaMasterStripPlugin* DawSession::masterStrip (bool create)
     if (p == nullptr) return nullptr;
     list.insertPlugin (p, 0, nullptr);
     return dynamic_cast<VegaMasterStripPlugin*> (p.get());
+}
+
+VegaTapeMachinePlugin* DawSession::masterTape (bool create)
+{
+    auto& list = editPtr->getMasterPluginList();
+    for (auto* p : list.getPlugins()) if (auto* m = dynamic_cast<VegaTapeMachinePlugin*> (p)) return m;
+    if (! create) return nullptr;
+    auto p = editPtr->getPluginCache().createNewPlugin (VegaTapeMachinePlugin::xmlTypeName, {});
+    if (p == nullptr) return nullptr;
+    p->setEnabled (false);                      // starts bypassed: switching it on is your call
+    list.insertPlugin (p, 0, nullptr);          // tape first, then the master strip's EQ / dynamics
+    return dynamic_cast<VegaTapeMachinePlugin*> (p.get());
 }
 
 VegaDJEQPlugin* DawSession::djEq (te::AudioTrack& t, bool create)
@@ -52,6 +64,7 @@ void DawSession::attachEdit (std::unique_ptr<te::Edit> e)
     editPtr->playInStopEnabled = true;
     for (auto* t : te::getAudioTracks (*editPtr)) djEq (*t);    // older projects get the DJ section too
     masterStrip();
+    masterTape();
     for (auto* t : te::getAudioTracks (*editPtr))          // elastic clips play in real time (the proxy setting isn't saved)
         for (auto* c : t->getClips())
             if (auto* ac = dynamic_cast<te::WaveAudioClip*> (c); ac != nullptr && ac->getWarpTime()) ac->setUsesProxy (false);
