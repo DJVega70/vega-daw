@@ -58,10 +58,11 @@ public:
     }
     static constexpr float capW = 34.0f, capH = 18.0f;
     juce::Colour capLine = juce::Colours::white;
+    bool lit = false;
     void paint (juce::Graphics& g) override
     {
         // the plug-ins' fader (ticks both sides, thin slot, dark cap with a white line)
-        vegapaint::fader (g, getLocalBounds().toFloat(), (float) getPositionOfValue (getValue()), isMouseOverOrDragging(), capW, capH, capLine);
+        vegapaint::fader (g, getLocalBounds().toFloat(), (float) getPositionOfValue (getValue()), isMouseOverOrDragging(), capW, capH, capLine, 8, lit);
     }
 };
 
@@ -225,7 +226,7 @@ public:
         fader.setTextValueSuffix (" dB"); fader.setDoubleClickReturnValue (true, 0.0);
         fader.onValueChange = [this] { if (auto vp = volume()) vp->setVolumeDb ((float) fader.getValue()); touch ("Volume", juce::String (fader.getValue(), 1) + " dB"); repaint (dbArea); };
         // gestures let automation WRITE mode record these moves
-        fader.onDragStart = [this] { if (auto vp = volume()) dawui::gesture (vp->volParam.get(), true); };
+        fader.onDragStart = [this] { if (track != nullptr && vs.selectedTrack != track->itemID) vs.selectTrack (track.get()); if (auto vp = volume()) dawui::gesture (vp->volParam.get(), true); };
         fader.onDragEnd   = [this] { if (auto vp = volume()) dawui::gesture (vp->volParam.get(), false); };
         pan.setRange (-1.0, 1.0, 0.01); pan.setDoubleClickReturnValue (true, 0.0);
         pan.textFromValueFunction = [] (double v) { return std::abs (v) < 0.01 ? juce::String ("C") : juce::String (juce::roundToInt (std::abs (v) * 100)) + (v < 0 ? " L" : " R"); };
@@ -411,7 +412,7 @@ public:
         const float target = juce::jlimit (-20.0f, 3.0f, std::max (level[0], level[1]) + 6.0f);
         vu += (target - vu) * 0.18f;
         const bool sel = track != nullptr && vs.selectedTrack == track->itemID;
-        if (sel != wasSelected) { wasSelected = sel; repaint(); }
+        if (sel != wasSelected) { wasSelected = sel; fader.lit = sel; fader.repaint(); repaint(); }
         repaint (meterArea.expanded (2)); repaint (vuArea);
     }
     void paint (juce::Graphics& g) override
@@ -423,28 +424,28 @@ public:
         g.setGradientFill (juce::ColourGradient (VegaColours::panelLight, 0, 0, VegaColours::panel, 0, (float) getHeight(), false));
         g.fillRect (r);
         g.setColour (VegaColours::line); g.drawVerticalLine (getWidth() - 1, 0, (float) getHeight());
-        if (sel) { g.setColour (VegaColours::accent.withAlpha (0.05f)); g.fillRect (r); g.setColour (VegaColours::accent.withAlpha (0.35f)); g.drawRect (r, 1); }
+        if (sel) { g.setColour (VegaColours::accent.withAlpha (0.04f)); g.fillRect (r); }
         // section titles
         for (auto& t : titles) vegapaint::sectionTitle (g, t.r, t.text);
         // VU (black screen, cyan needle)
         if (! vuArea.isEmpty())
         {
             auto v = vuArea.toFloat();
-            vegapaint::screen (g, v);
+            vegapaint::vuFace (g, v);
             const auto pivot = juce::Point<float> (v.getCentreX(), v.getBottom() + 10.0f);
             const float rad = v.getHeight() + 2.0f;
             auto angleFor = [] (float db) { return juce::jmap (db, -20.0f, 3.0f, -0.82f, 0.82f); };
             juce::Path arc; arc.addCentredArc (pivot.x, pivot.y, rad - 6, rad - 6, 0, angleFor (-20), angleFor (0), true);
-            g.setColour (VegaColours::textDim.withAlpha (0.8f)); g.strokePath (arc, juce::PathStrokeType (1.2f));
+            g.setColour (vegapaint::vuInk.withAlpha (0.85f)); g.strokePath (arc, juce::PathStrokeType (1.2f));
             juce::Path hot; hot.addCentredArc (pivot.x, pivot.y, rad - 6, rad - 6, 0, angleFor (0), angleFor (3), true);
-            g.setColour (juce::Colour (0xffff5a5a)); g.strokePath (hot, juce::PathStrokeType (2.2f));
-            g.setFont (VegaFonts::ui (8.5f)); g.setColour (VegaColours::textDim);
+            g.setColour (juce::Colour (0xffff6a5a)); g.strokePath (hot, juce::PathStrokeType (2.2f));
+            g.setFont (VegaFonts::ui (8.5f)); g.setColour (vegapaint::vuInk);
             g.drawText ("-20", (int) v.getX() + 4, (int) v.getY() + 2, 20, 10, juce::Justification::left);
-            g.setColour (juce::Colour (0xffff5a5a)); g.drawText ("+3", (int) v.getRight() - 18, (int) v.getY() + 2, 14, 10, juce::Justification::right);
-            g.setColour (VegaColours::textDim); g.drawText ("VU", vuArea.withTrimmedTop (vuArea.getHeight() - 11), juce::Justification::centred);
+            g.setColour (juce::Colour (0xffff6a5a)); g.drawText ("+3", (int) v.getRight() - 18, (int) v.getY() + 2, 14, 10, juce::Justification::right);
+            g.setColour (vegapaint::vuInk.withAlpha (0.8f)); g.drawText ("VU", vuArea.withTrimmedTop (vuArea.getHeight() - 11), juce::Justification::centred);
             const float a = angleFor (vu);
             g.saveState(); g.reduceClipRegion (vuArea);
-            g.setColour (VegaColours::accent);
+            g.setColour (vegapaint::vuNeedle);
             g.drawLine (pivot.x + std::sin (a) * 12.0f, pivot.y - std::cos (a) * 12.0f, pivot.x + std::sin (a) * (rad - 3), pivot.y - std::cos (a) * (rad - 3), 1.5f);
             g.restoreState();
         }
@@ -470,6 +471,14 @@ public:
         }
         // divider above the channel controls
         if (dividerY > 0) { g.setColour (VegaColours::line); g.drawHorizontalLine (dividerY, 0, (float) getWidth() - 1); }
+        // selected channel, like FL Studio: a lit frame around its fader + meters
+        if (sel && ! meterArea.isEmpty())
+        {
+            auto box = fader.getBounds().getUnion (meterArea).expanded (3, 0).toFloat();
+            g.setColour (VegaColours::accent.withAlpha (0.10f)); g.fillRoundedRectangle (box.expanded (3.0f), 4.0f);
+            g.setColour (VegaColours::accent.withAlpha (0.25f)); g.drawRoundedRectangle (box.expanded (1.5f), 3.5f, 3.0f);
+            g.setColour (VegaColours::accent); g.drawRoundedRectangle (box, 3.0f, 1.4f);
+        }
         // meters (the plug-ins' LED columns) + scale
         if (! meterArea.isEmpty())
         {
@@ -550,8 +559,9 @@ public:
     }
     void mouseDown (const juce::MouseEvent& e) override
     {
-        if (track == nullptr || ! nameArea.contains (e.getPosition())) return;
+        if (track == nullptr) return;          // click anywhere on the strip selects it (like FL Studio)
         vs.selectTrack (track.get()); owner.touched (track->getName(), "Selected");
+        juce::ignoreUnused (e);
     }
     te::AudioTrack::Ptr track;
 private:
@@ -807,6 +817,156 @@ private:
     float angleAt (juce::Point<float> p) const { const auto c = getLocalBounds().toFloat().getCentre(); return std::atan2 (p.x - c.x, c.y - p.y); }
     float angle = 0, lastAngle = 0, lastY = 0;
 };
+/** Reel-to-reel tape machine: the reels turn with the song position (tape packs shrink / grow as the song plays),
+    the counter shows bars | beats. Drag either reel (or use the wheel) to move the playhead, or scrub with SCRUB lit. */
+class TapeDeck : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    std::function<void (double turns)> onTurn;
+    std::function<void (bool)> onTouch;
+    void update (double posSec, double lenSec, bool isPlaying, bool isRecording, const juce::String& counterText)
+    {
+        const double len = std::max ({ lenSec, posSec + 30.0, 60.0 });
+        if (std::abs (posSec - pos) < 1e-4 && len == length && isPlaying == playing && isRecording == recording && counterText == counter) return;
+        pos = posSec; length = len; playing = isPlaying; recording = isRecording; counter = counterText;
+        repaint();
+    }
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        // deck plate: dark machined panel with a bevel
+        {
+            juce::Path sh; sh.addRoundedRectangle (r.reduced (2.0f).translated (0, 3), 8.0f);
+            juce::DropShadow (juce::Colours::black.withAlpha (0.6f), 10, {}).drawForPath (g, sh);
+        }
+        auto plate = r.reduced (2.0f);
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff3a3a3a), plate.getX(), plate.getY(), juce::Colour (0xff1e1e1e), plate.getX(), plate.getBottom(), false));
+        g.fillRoundedRectangle (plate, 8.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.08f)); g.drawRoundedRectangle (plate.reduced (1.0f), 7.0f, 1.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.8f)); g.drawRoundedRectangle (plate, 8.0f, 1.0f);
+        for (int i = 0; i < (int) plate.getHeight(); i += 3)        // brushed lines
+        { g.setColour (juce::Colours::white.withAlpha (i % 2 ? 0.012f : 0.02f)); g.drawHorizontalLine ((int) plate.getY() + i, plate.getX() + 6, plate.getRight() - 6); }
+
+        const float reelR = std::min (plate.getHeight() * 0.36f, plate.getWidth() * 0.2f);
+        const juce::Point<float> lc (plate.getX() + plate.getWidth() * 0.24f, plate.getY() + reelR + 12.0f);
+        const juce::Point<float> rc (plate.getRight() - plate.getWidth() * 0.24f, lc.y);
+        const float hubR = reelR * 0.22f, packMin = reelR * 0.3f, packMax = reelR * 0.9f;
+        const double f = juce::jlimit (0.0, 1.0, pos / length);
+        const float packL = (float) std::sqrt (packMin * packMin + (packMax * packMax - packMin * packMin) * (1.0 - f));
+        const float packR = (float) std::sqrt (packMin * packMin + (packMax * packMax - packMin * packMin) * f);
+        // constant tape speed: each reel turns faster as its pack gets smaller
+        const float tapePx = (float) pos * 38.0f;
+        const float angL = -tapePx / packL, angR = -tapePx / packR;
+
+        // tape path: supply pack -> guide -> heads -> capstan -> guide -> take-up pack
+        const float baseY = plate.getBottom() - 30.0f;
+        const juce::Point<float> gl (plate.getX() + plate.getWidth() * 0.34f, baseY), gr (plate.getRight() - plate.getWidth() * 0.34f, baseY);
+        const juce::Point<float> head (plate.getCentreX(), baseY + 4.0f);
+        juce::Path tape;
+        tape.startNewSubPath (lc.x - packL, lc.y); tape.lineTo (gl.x - 7, gl.y + 2); tape.lineTo (head.x - 30, head.y + 5);
+        tape.lineTo (head.x + 30, head.y + 5); tape.lineTo (gr.x + 7, gr.y + 2); tape.lineTo (rc.x + packR, rc.y);
+        g.setColour (juce::Colour (0xff5a3d26)); g.strokePath (tape, juce::PathStrokeType (2.2f));
+        // head block
+        auto hb = juce::Rectangle<float> (64.0f, 16.0f).withCentre (head.translated (0, 9));
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffd8d8d8), hb.getX(), hb.getY(), juce::Colour (0xff6a6a6a), hb.getX(), hb.getBottom(), false));
+        g.fillRoundedRectangle (hb, 3.0f);
+        g.setColour (juce::Colour (0xff1a1a1a));
+        for (int k = -1; k <= 1; ++k) g.fillRoundedRectangle (juce::Rectangle<float> (12.0f, 8.0f).withCentre ({ hb.getCentreX() + k * 19.0f, hb.getY() + 5.0f }), 2.0f);
+        // guide rollers
+        for (auto p : { gl, gr })
+        {
+            g.setGradientFill (juce::ColourGradient (juce::Colour (0xffeeeeee), p.x - 6, p.y - 6, juce::Colour (0xff5a5a5a), p.x + 6, p.y + 6, false));
+            g.fillEllipse (p.x - 7, p.y - 7, 14, 14);
+            g.setColour (juce::Colour (0xff222222)); g.fillEllipse (p.x - 2.5f, p.y - 2.5f, 5, 5);
+        }
+        drawReel (g, lc, reelR, hubR, packL, angL);
+        drawReel (g, rc, reelR, hubR, packR, angR);
+
+        // counter + status lamps
+        auto cnt = juce::Rectangle<float> (112.0f, 22.0f).withCentre ({ plate.getCentreX(), plate.getY() + 22.0f });
+        vegapaint::screen (g, cnt);
+        g.setColour (VegaColours::accent); g.setFont (VegaFonts::mono (13.0f));
+        g.drawText (counter, cnt, juce::Justification::centred);
+        auto lamp = [&] (float x, const juce::String& t, bool on, juce::Colour c)
+        {
+            auto lr = juce::Rectangle<float> (7.0f, 7.0f).withCentre ({ x, cnt.getBottom() + 12.0f });
+            if (on) { g.setColour (c.withAlpha (0.35f)); g.fillEllipse (lr.expanded (3.0f)); }
+            g.setColour (on ? c : juce::Colour (0xff3a3a3a)); g.fillEllipse (lr);
+            g.setColour (VegaColours::textDim); g.setFont (VegaFonts::ui (8.5f, true));
+            g.drawText (t, juce::Rectangle<float> (30.0f, 10.0f).withCentre ({ x, lr.getBottom() + 8.0f }), juce::Justification::centred);
+        };
+        lamp (plate.getCentreX() - 18.0f, "PLAY", playing, VegaColours::accent);
+        lamp (plate.getCentreX() + 18.0f, "REC", recording, juce::Colour (0xffff5a5a));
+        g.setColour (VegaColours::textDim); g.setFont (VegaFonts::ui (9.0f, true));
+        g.drawText ("VEGA TAPE 2T", plate.reduced (12.0f, 8.0f), juce::Justification::topLeft);
+        g.drawText ("15 / 30 IPS", plate.reduced (12.0f, 8.0f), juce::Justification::topRight);
+        reelCentres[0] = lc; reelCentres[1] = rc; reelRadius = reelR;
+    }
+    void mouseDown (const juce::MouseEvent& e) override { lastAngle = angleAt (e.position); lastY = e.position.y; if (onTouch) onTouch (true); }
+    void mouseUp (const juce::MouseEvent&) override { if (onTouch) onTouch (false); }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        double delta;
+        const auto c = nearestReel (e.position);
+        if (e.position.getDistanceFrom (c) > reelRadius * 0.2f)
+        {
+            const float a = angleAt (e.position);
+            float da = a - lastAngle;
+            if (da > juce::MathConstants<float>::pi) da -= juce::MathConstants<float>::twoPi;
+            if (da < -juce::MathConstants<float>::pi) da += juce::MathConstants<float>::twoPi;
+            lastAngle = a; delta = da / juce::MathConstants<double>::twoPi;
+        }
+        else { delta = (lastY - e.position.y) / 300.0; lastAngle = angleAt (e.position); }
+        lastY = e.position.y;
+        if (onTurn) onTurn (delta);
+    }
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& w) override { if (onTurn) onTurn (w.deltaY * 0.25); }
+private:
+    static void drawReel (juce::Graphics& g, juce::Point<float> c, float r, float hubR, float pack, float ang)
+    {
+        // tape pack (brown oxide) behind the flange
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff4a3322), c.x, c.y - pack, juce::Colour (0xff23170e), c.x, c.y + pack, false));
+        g.fillEllipse (c.x - pack, c.y - pack, pack * 2, pack * 2);
+        for (float rr = hubR * 1.4f; rr < pack; rr += 3.0f)
+        { g.setColour (juce::Colours::black.withAlpha (0.12f)); g.drawEllipse (c.x - rr, c.y - rr, rr * 2, rr * 2, 0.6f); }
+        // flange: smoked metal disc with three windows that show the tape, turning with the reel
+        juce::Path flange; flange.addEllipse (c.x - r, c.y - r, r * 2, r * 2);
+        juce::Path windows;
+        for (int k = 0; k < 3; ++k)
+        {
+            const float a0 = ang + k * juce::MathConstants<float>::twoPi / 3.0f;
+            juce::Path w; w.addCentredArc (c.x, c.y, r * 0.8f, r * 0.8f, 0, a0 - 0.62f, a0 + 0.62f, true);
+            w.addCentredArc (c.x, c.y, hubR * 1.6f, hubR * 1.6f, 0, a0 + 0.5f, a0 - 0.5f, false);
+            w.closeSubPath();
+            windows.addPath (w);
+        }
+        flange.setUsingNonZeroWinding (false); flange.addPath (windows);
+        {
+            juce::Path sh; sh.addEllipse (c.x - r, c.y - r + 3, r * 2, r * 2);
+            juce::DropShadow (juce::Colours::black.withAlpha (0.6f), 10, {}).drawForPath (g, sh);
+        }
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffb8b8b8).withAlpha (0.92f), c.x - r, c.y - r, juce::Colour (0xff4a4a4a).withAlpha (0.92f), c.x + r, c.y + r, false));
+        g.fillPath (flange);
+        g.setColour (juce::Colours::white.withAlpha (0.35f)); g.drawEllipse (c.x - r + 1, c.y - r + 1, r * 2 - 2, r * 2 - 2, 1.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.5f)); g.strokePath (windows, juce::PathStrokeType (1.0f));
+        // hub with three keys
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff0f0f0), c.x - hubR, c.y - hubR, juce::Colour (0xff707070), c.x + hubR, c.y + hubR, false));
+        g.fillEllipse (c.x - hubR, c.y - hubR, hubR * 2, hubR * 2);
+        g.setColour (juce::Colour (0xff1a1a1a));
+        g.fillEllipse (c.x - hubR * 0.38f, c.y - hubR * 0.38f, hubR * 0.76f, hubR * 0.76f);
+        for (int k = 0; k < 3; ++k)
+        {
+            const float a = ang + k * juce::MathConstants<float>::twoPi / 3.0f;
+            const juce::Point<float> p (c.x + std::sin (a) * hubR * 0.62f, c.y - std::cos (a) * hubR * 0.62f);
+            g.fillRoundedRectangle (juce::Rectangle<float> (hubR * 0.28f, hubR * 0.28f).withCentre (p), 1.0f);
+        }
+    }
+    juce::Point<float> nearestReel (juce::Point<float> p) const { return p.getDistanceFrom (reelCentres[0]) < p.getDistanceFrom (reelCentres[1]) ? reelCentres[0] : reelCentres[1]; }
+    float angleAt (juce::Point<float> p) const { const auto c = nearestReel (p); return std::atan2 (p.x - c.x, c.y - p.y); }
+    double pos = 0, length = 60; bool playing = false, recording = false; juce::String counter { "1.1.1" };
+    juce::Point<float> reelCentres[2]; float reelRadius = 60.0f;
+    float lastAngle = 0, lastY = 0;
+};
 } // namespace tp
 
 namespace uf
@@ -970,7 +1130,7 @@ public:
         mode.setTooltip ("MODE: the arrow keys zoom instead of moving"); page58.setTooltip ("5-8: encoders control HI / MID / LOW / master volume");
         chanL.setTooltip ("Shift the mixer by one channel"); chanR.setTooltip ("Shift the mixer by one channel");
         bankL.setTooltip ("Previous 8 channels"); bankR.setTooltip ("Next 8 channels");
-        layer.setTooltip ("LAYER: rewind / fast-forward nudge the selected clip by one grid step"); scrub.setTooltip ("SCRUB: the jog wheel plays the audio as you turn it");
+        layer.setTooltip ("LAYER: rewind / fast-forward nudge the selected clip by one grid step"); scrub.setTooltip ("SCRUB: hear the audio as you drag the tape reels");
         mode.onClick = [this] { owner.touched ("Mode", mode.getToggleState() ? "Arrows zoom" : "Arrows navigate"); };
         page58.onClick = [this] { owner.touched ("Encoders", page58.getToggleState() ? "5-8: Hi / Mid / Low / Master" : "1-4: Vol / Pan / Filter / VU ref"); };
         chanL.onClick = [this] { owner.scrollStrips (-1); }; chanR.onClick = [this] { owner.scrollStrips (1); };
@@ -979,7 +1139,7 @@ public:
         scrub.onClick = [this] { owner.touched ("Jog wheel", scrub.getToggleState() ? "Scrub" : "Move playhead"); };
 
         // navigation cluster + jog
-        key (navUp, 92, 568, 36, 34); key (navDown, 92, 668, 36, 34); key (navLeft, 42, 618, 36, 34); key (navRight, 142, 618, 36, 34); key (navDot, 92, 618, 36, 34);
+        // (the old arrow cluster + jog wheel became the tape deck; the arrow actions stay on the keys' callbacks)
         navUp.onClick = [this] { if (mode.getToggleState()) vZoom (1); else owner.selectNeighbour (-1); };
         navDown.onClick = [this] { if (mode.getToggleState()) vZoom (-1); else owner.selectNeighbour (1); };
         navLeft.onClick = [this] { if (mode.getToggleState()) hZoom (-1); else moveBars (-1); };
@@ -988,9 +1148,10 @@ public:
         navUp.setTooltip ("Previous track (MODE: taller tracks)"); navDown.setTooltip ("Next track (MODE: shorter tracks)");
         navLeft.setTooltip ("Back one bar (MODE: zoom out)"); navRight.setTooltip ("Forward one bar (MODE: zoom in)");
         navDot.setTooltip ("Drop a marker at the playhead (or remove the one there)");
-        canvas.addAndMakeVisible (jog); jog.setBounds (232, 548, 200, 200); jog.plain = true;
-        jog.onTurn = [this] (double t) { jogTurn (t); };
-        jog.onTouch = [this] (bool d) { if (scrub.getToggleState()) vs.edit().getTransport().setUserDragging (d); };
+        canvas.addAndMakeVisible (deck); deck.setBounds (28, 552, 412, 196);
+        deck.onTurn = [this] (double t) { jogTurn (t); };
+        deck.onTouch = [this] (bool d) { if (scrub.getToggleState()) vs.edit().getTransport().setUserDragging (d); };
+        deck.setTooltip ("Tape: drag a reel (or use the wheel) to move the playhead - with SCRUB lit you hear the audio as you drag");
 
         // automation / function row
         juce::Button* row[] { &autoOff, &autoRead, &autoWrite, &cycle, &click, &drop, &shiftKey };
@@ -1181,6 +1342,10 @@ private:
                 if (current[c] > peak[c]) peak[c] = current[c];
             }
         }
+        {
+            const double len = vs.edit().getLength().inSeconds();
+            deck.update (t.getPosition().inSeconds(), len, t.isPlaying(), t.isRecording(), dawui::formatBarsBeats (vs.edit(), t.getPosition()));
+        }
         canvas.repaint();
     }
 
@@ -1256,11 +1421,7 @@ private:
         g.drawText ("SCRUB", 376, 518, 52, 14, juce::Justification::centred);
         g.setColour (console::line); g.fillRect (232.0f, 468.0f, 190.0f, 2.0f); g.setColour (console::ink);
         g.drawLine (240, 532, 252, 532, 1.2f); g.drawLine (302, 532, 314, 532, 1.2f);
-        // nav ring
-        {
-            juce::Path ring; ring.addEllipse (110 - 66, 635 - 66, 132, 132);
-            g.setColour (juce::Colours::white.withAlpha (0.85f)); g.strokePath (ring, juce::PathStrokeType (1.4f));
-        }
+
         // function row labels
         static const char* fn[] { "OFF", "READ", "WRT", "CYCLE", "CLICK", "DROP", "SHIFT" };
         for (int i = 0; i < 7; ++i)
@@ -1277,8 +1438,8 @@ private:
 
     void drawVu (juce::Graphics& g, juce::Rectangle<float> r, float vu)
     {
-        // the plug-ins' black display with a cyan needle
-        vegapaint::screen (g, r);
+        // backlit warm-blue VU face
+        vegapaint::vuFace (g, r);
         auto face = r.reduced (5.0f);
         const juce::Point<float> pivot (face.getCentreX(), face.getBottom() + face.getHeight() * 0.55f);
         const float rad = face.getHeight() * 1.04f;
@@ -1288,23 +1449,24 @@ private:
             return juce::degreesToRadians (-40.0f + 80.0f * n);
         };
         juce::Path arc; arc.addCentredArc (pivot.x, pivot.y, rad, rad, 0, angleFor (-20), angleFor (0), true);
-        g.setColour (VegaColours::textDim); g.strokePath (arc, juce::PathStrokeType (1.3f));
+        g.setColour (vegapaint::vuInk); g.strokePath (arc, juce::PathStrokeType (1.3f));
         juce::Path red; red.addCentredArc (pivot.x, pivot.y, rad + 2, rad + 2, 0, angleFor (0), angleFor (3), true);
-        g.setColour (juce::Colour (0xffff5a5a)); g.strokePath (red, juce::PathStrokeType (3.0f));
+        g.setColour (juce::Colour (0xffff6a5a)); g.strokePath (red, juce::PathStrokeType (3.0f));
         g.setFont (VegaFonts::ui (8.5f, true));
         for (float m : { -20.0f, -10.0f, -7.0f, -5.0f, -3.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f })
         {
             const float a = angleFor (m);
             const auto p1 = pivot.getPointOnCircumference (rad, a), p2 = pivot.getPointOnCircumference (rad + 6, a), pl = pivot.getPointOnCircumference (rad + 13, a);
-            g.setColour (m > 0 ? juce::Colour (0xffff5a5a) : VegaColours::textDim);
+            g.setColour (m > 0 ? juce::Colour (0xffff6a5a) : vegapaint::vuInk);
             g.drawLine ({ p1, p2 }, 1.2f);
             g.drawText (juce::String ((int) std::abs (m)), juce::Rectangle<float> (16, 10).withCentre (pl), juce::Justification::centred);
         }
-        g.setColour (VegaColours::textDim); g.setFont (VegaFonts::ui (11.0f, true));
+        g.setColour (vegapaint::vuInk); g.setFont (VegaFonts::ui (11.0f, true));
         g.drawText ("VU", face.withTrimmedTop (face.getHeight() * 0.55f).withHeight (14), juce::Justification::centred);
         g.saveState(); g.reduceClipRegion (face.toNearestInt());
         const float a = angleFor (vu);
-        g.setColour (VegaColours::accent); g.drawLine ({ pivot, pivot.getPointOnCircumference (rad + 4, a) }, 1.6f);
+        g.setColour (juce::Colours::black.withAlpha (0.35f)); g.drawLine ({ pivot.translated (1.5f, 1.5f), pivot.getPointOnCircumference (rad + 4, a).translated (1.5f, 1.5f) }, 1.6f);
+        g.setColour (vegapaint::vuNeedle); g.drawLine ({ pivot, pivot.getPointOnCircumference (rad + 4, a) }, 1.6f);
         g.restoreState();
     }
 
@@ -1333,7 +1495,7 @@ private:
             cycle { uf::Key::loop, {}, juce::Colour (0xffffd98a) }, click { uf::Key::metro, {}, juce::Colour (0xffffd98a) }, drop { uf::Key::dropIn, {}, juce::Colour (0xffff8a7a) },
             shiftKey { uf::Key::shiftUp, {}, juce::Colour (0xffffd98a), false };
     uf::TransportKey rew { uf::TransportKey::rew }, ffwd { uf::TransportKey::ffwd }, stop { uf::TransportKey::stop }, play { uf::TransportKey::play }, rec { uf::TransportKey::rec };
-    tp::Jog jog;
+    tp::Jog jog; tp::TapeDeck deck;
     juce::String line1 { "Vega Productions" }, line2 { "Mixer" };
     float vuRef = -18.0f, vuDb[2] { -25, -25 }, current[2] { -100, -100 }, peak[2] { -100, -100 };
     double chanAcc = 0; int holdTicks[2] {}; bool held = false;

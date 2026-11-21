@@ -141,7 +141,7 @@ inline juce::Colour keyInk (bool on) { return on ? juce::Colour (0xff141414) : V
 /** The plug-ins' fader: tick marks both sides, thin black slot, dark cap with a white line.
     `capY` is the cap centre. */
 inline void fader (juce::Graphics& g, juce::Rectangle<float> area, float capY, bool hover = false, float capW = 28.0f, float capH = 16.0f,
-                   juce::Colour line = juce::Colours::white, int ticks = 8)
+                   juce::Colour line = juce::Colours::white, int ticks = 8, bool litCap = false)
 {
     const float cx = area.getCentreX(), top = area.getY() + 8.0f, bottom = area.getBottom() - 8.0f;
     const float half = capW * 0.5f + 6.0f;
@@ -158,6 +158,16 @@ inline void fader (juce::Graphics& g, juce::Rectangle<float> area, float capY, b
     auto cap = juce::Rectangle<float> (capW, capH).withCentre ({ cx, capY });
     juce::Path sh; sh.addRoundedRectangle (cap.translated (0, 3), 2.0f);
     juce::DropShadow (juce::Colours::black.withAlpha (0.8f), 8, {}).drawForPath (g, sh);
+    if (litCap)
+    {   // the selected channel's cap lights up (like FL Studio's mixer)
+        g.setColour (VegaColours::accent.withAlpha (0.25f)); g.fillRoundedRectangle (cap.expanded (3.0f), 4.0f);
+        g.setGradientFill (juce::ColourGradient (VegaColours::accent.brighter (0.35f), cx, cap.getY(), VegaColours::accent.darker (0.55f), cx, cap.getBottom(), false));
+        g.fillRoundedRectangle (cap, 2.0f);
+        g.setColour (VegaColours::accent.darker (0.8f)); g.drawRoundedRectangle (cap, 2.0f, 1.0f);
+        g.setColour (juce::Colour (0xff0d2a29));
+        g.drawLine (cap.getX() + 3, cap.getCentreY(), cap.getRight() - 3, cap.getCentreY(), 1.6f);
+        return;
+    }
     g.setGradientFill (juce::ColourGradient (juce::Colour (0xff5a5a5a), cx, cap.getY(), juce::Colour (0xff222222), cx, cap.getBottom(), false));
     g.fillRoundedRectangle (cap, 2.0f);
     g.setColour (juce::Colour (0xff1a1a1a)); g.drawRoundedRectangle (cap, 2.0f, 1.0f);
@@ -181,6 +191,20 @@ inline void ledColumn (juce::Graphics& g, juce::Rectangle<float> b, float levelD
         g.fillRect (seg);
         if (! lit && i < n - 1 && holdDb <= th && holdDb > segDb[i + 1]) { g.setColour (c.withAlpha (0.7f)); g.fillRect (seg); }
     }
+}
+
+/** Backlit VU face: warm blue glow, light scale. Draw scale / needle on top in vuInk / vuNeedle. */
+inline const juce::Colour vuInk { 0xffe4efff }, vuNeedle { 0xfffff6e8 };
+inline void vuFace (juce::Graphics& g, juce::Rectangle<float> r, float corner = 3.0f)
+{
+    g.setColour (juce::Colour (0xff081626)); g.fillRoundedRectangle (r, corner);
+    juce::ColourGradient glow (juce::Colour (0xff4f8fd6), r.getCentreX(), r.getBottom() - r.getHeight() * 0.15f,
+                               juce::Colour (0xff10284a), r.getCentreX(), r.getY() - r.getHeight() * 0.6f, true);
+    glow.addColour (0.55, juce::Colour (0xff2c64a6));
+    g.setGradientFill (glow); g.fillRoundedRectangle (r.reduced (1.0f), corner);
+    g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.16f), r.getX(), r.getY(), juce::Colours::transparentWhite, r.getX(), r.getCentreY(), false));
+    g.fillRoundedRectangle (r.reduced (1.0f).withHeight (r.getHeight() * 0.45f), corner);     // glass
+    g.setColour (juce::Colours::black.withAlpha (0.7f)); g.drawRoundedRectangle (r.reduced (0.5f), corner, 1.0f);
 }
 
 /** Black display screen (inserts, readouts) */
