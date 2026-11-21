@@ -200,10 +200,10 @@ inline void hardwareFader (juce::Graphics& g, juce::Rectangle<float> area, float
         juce::DropShadow (juce::Colours::black.withAlpha (0.85f), 12, {}).drawForPath (g, sh);
     }
     if (lit) { g.setColour (VegaColours::accent.withAlpha (0.28f)); g.fillRoundedRectangle (cap.expanded (4.0f), 6.0f); }
-    // body: light grey plastic, darker skirt at the bottom
-    juce::ColourGradient body (juce::Colour (0xfff2f2f2), cap.getX(), cap.getY(), juce::Colour (0xff8c8c8c), cap.getX(), cap.getBottom(), false);
-    body.addColour (0.45, juce::Colour (0xffd6d6d6));
-    body.addColour (0.55, juce::Colour (0xffbdbdbd));
+    // body: the plug-ins' charcoal cap colours, darker skirt at the bottom
+    juce::ColourGradient body (juce::Colour (0xff6a6a6a), cap.getX(), cap.getY(), juce::Colour (0xff1c1c1c), cap.getX(), cap.getBottom(), false);
+    body.addColour (0.45, juce::Colour (0xff4a4a4a));
+    body.addColour (0.55, juce::Colour (0xff383838));
     g.setGradientFill (body); g.fillRoundedRectangle (cap, 4.0f);
     // side shading (rounded edges)
     g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.25f), cap.getX(), 0, juce::Colours::transparentBlack, cap.getX() + capW * 0.25f, 0, false));
@@ -212,18 +212,18 @@ inline void hardwareFader (juce::Graphics& g, juce::Rectangle<float> area, float
     g.fillRoundedRectangle (cap, 4.0f);
     // scooped finger rest: the upper half dips (darker band, light lip)
     auto scoop = cap.withHeight (capH * 0.42f).reduced (3.0f, 3.0f);
-    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff9a9a9a), 0, scoop.getY(), juce::Colour (0xffe8e8e8), 0, scoop.getBottom(), false));
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff262626), 0, scoop.getY(), juce::Colour (0xff5c5c5c), 0, scoop.getBottom(), false));
     g.fillRoundedRectangle (scoop, 3.0f);
     // grip ridges on the lower half
     for (int k = 0; k < 4; ++k)
     {
         const float y = cap.getY() + capH * (0.62f + k * 0.08f);
-        g.setColour (juce::Colours::black.withAlpha (0.28f)); g.drawLine (cap.getX() + 5, y, cap.getRight() - 5, y, 1.0f);
-        g.setColour (juce::Colours::white.withAlpha (0.5f)); g.drawLine (cap.getX() + 5, y + 1, cap.getRight() - 5, y + 1, 0.8f);
+        g.setColour (juce::Colours::black.withAlpha (0.45f)); g.drawLine (cap.getX() + 5, y, cap.getRight() - 5, y, 1.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.12f)); g.drawLine (cap.getX() + 5, y + 1, cap.getRight() - 5, y + 1, 0.8f);
     }
     // centre line (the value mark)
     const float my = cap.getY() + capH * 0.5f;
-    g.setColour (lit ? VegaColours::accent.darker (0.3f) : hover ? VegaColours::accent.darker (0.5f) : juce::Colour (0xff1e1e1e));
+    g.setColour (lit ? VegaColours::accent : hover ? VegaColours::accent.withAlpha (0.8f) : juce::Colours::white);
     g.fillRect (cap.getX() + 2.0f, my - 1.2f, capW - 4.0f, 2.4f);
     g.setColour (juce::Colours::black.withAlpha (0.55f)); g.drawRoundedRectangle (cap, 4.0f, 1.0f);
 }

@@ -1274,7 +1274,7 @@ public:
         navLeft.setTooltip ("Back one bar (MODE: zoom out)"); navRight.setTooltip ("Forward one bar (MODE: zoom in)");
         navDot.setTooltip ("Drop a marker at the playhead (or remove the one there)");
         // ---- the master tape machine: reels + DRIVE / IPS / CAL, On / Bypass, presets
-        canvas.addAndMakeVisible (deck); deck.setBounds (28, 412, 412, 198);
+        canvas.addAndMakeVisible (deck); deck.setBounds (28, 404, 412, 168);
         deck.onTurn = [this] (double t) { jogTurn (t); };
         deck.onTouch = [this] (bool d) { if (! vs.edit().getTransport().isPlaying()) vs.edit().getTransport().setUserDragging (d); };
         deck.setTooltip ("Vega Tape 2T on the master bus. Drag a reel (or use the wheel) to move the playhead - stopped, you hear the tape scrub.");
@@ -1282,7 +1282,8 @@ public:
         for (int i = 0; i < 3; ++i)
         {
             auto& k = tapeKnob[i];
-            canvas.addAndMakeVisible (k); k.setBounds (34 + i * 74, 616, 74, 70);
+            k.getProperties().set ("big", true);
+            canvas.addAndMakeVisible (k); k.setBounds (99 + i * 90, 574, 90, 76);
             k.onValueChange = [this, i]
             {
                 if (auto* tp = tape()) { (i == 0 ? tp->drive : i == 1 ? tp->ips : tp->cal)->setParameter ((float) tapeKnob[i].getValue(), juce::sendNotification); }
@@ -1299,15 +1300,16 @@ public:
         tapeKnob[1].setTooltip ("IPS: tape speed - 7.5 is darker and fatter, 15 warm, 30 clean and open");
         tapeKnob[2].setTooltip ("CAL: output calibration trim");
         for (auto* b : { &tapeOn, &tapeBypass }) canvas.addAndMakeVisible (b);
-        tapeOn.setBounds (278, 616, 44, 40); tapeBypass.setBounds (330, 616, 50, 40);
+        tapeOn.setBounds (184, 662, 44, 38); tapeBypass.setBounds (238, 662, 50, 38);
         tapeOn.onClick = [this] { if (auto* tp = tape()) { tp->setEnabled (true); owner.touched ("Tape", "On"); } };
         tapeBypass.onClick = [this] { if (auto* tp = tape()) { tp->setEnabled (false); owner.touched ("Tape", "Bypassed"); } };
         tapeOn.setTooltip ("Tape machine on (master bus)"); tapeBypass.setTooltip ("Bypass the tape machine");
-        canvas.addAndMakeVisible (tapePreset); tapePreset.setBounds (270, 680, 166, 22);
+        canvas.addAndMakeVisible (tapePreset); tapePreset.setBounds (92, 704, 348, 22);
         tapePreset.onClick = [this] { presetMenu(); }; tapePreset.setTooltip ("Tape presets");
         for (auto* b : { &tapeDel, &tapeRen, &tapeSave }) { canvas.addAndMakeVisible (b); }
-        tapeDel.setBounds (268, 708, 54, 24); tapeRen.setBounds (325, 708, 56, 24); tapeSave.setBounds (384, 708, 54, 24);
+        tapeDel.setBounds (28, 730, 134, 24); tapeRen.setBounds (167, 730, 134, 24); tapeSave.setBounds (306, 730, 134, 24);
         tapeSave.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffd0d0d0));
+        tapeSave.setToggleState (true, juce::dontSendNotification); tapeSave.setClickingTogglesState (false);
         tapeDel.onClick = [this] { deletePreset(); }; tapeRen.onClick = [this] { renamePreset(); }; tapeSave.onClick = [this] { savePreset(); };
 
         // automation / function row
@@ -1576,9 +1578,8 @@ private:
         // tape machine captions
         g.setFont (VegaFonts::ui (10.5f, true)); g.setColour (console::inkDim);
         static const char* tn[] { "DRIVE", "IPS", "CAL" };
-        for (int k = 0; k < 3; ++k) g.drawText (tn[k], 34 + k * 74, 686, 74, 12, juce::Justification::centred);
-        g.drawText ("PRESET", 270, 664, 100, 14, juce::Justification::centredLeft);
-        g.setColour (console::line); g.fillRect (262.0f, 618.0f, 1.0f, 112.0f);
+        for (int k = 0; k < 3; ++k) g.drawText (tn[k], 99 + k * 90, 648, 90, 12, juce::Justification::centred);
+        g.drawText ("PRESET", 28, 704, 60, 22, juce::Justification::centredLeft);
 
         // function row labels
         static const char* fn[] { "OFF", "READ", "WRT", "CYCLE", "CLICK", "DROP", "SHIFT" };
@@ -1654,8 +1655,8 @@ private:
             shiftKey { uf::Key::shiftUp, {}, juce::Colour (0xffffd98a), false };
     uf::TransportKey rew { uf::TransportKey::rew }, ffwd { uf::TransportKey::ffwd }, stop { uf::TransportKey::stop }, play { uf::TransportKey::play }, rec { uf::TransportKey::rec };
     tp::Jog jog; tp::TapeDeck deck;
-    tp::GoldKnob tapeKnob[3];
-    cs::SqButton tapeOn { "On", VegaColours::accent }, tapeBypass { "Bypass", tp::TapeDeck::gold };
+    xl::Knob tapeKnob[3];          // the plug-ins' big black knobs, like the Vega Tape panel
+    cs::SqButton tapeOn { "On", VegaColours::accent }, tapeBypass { "Bypass", VegaColours::accent };
     cs::ComboButton tapePreset;
     juce::TextButton tapeDel { "DELETE" }, tapeRen { "RENAME" }, tapeSave { "SAVE" };
     VegaTapeMachinePlugin* tape() { return vs.session.masterTape(); }
