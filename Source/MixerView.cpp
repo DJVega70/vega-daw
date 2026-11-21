@@ -837,7 +837,7 @@ public:
     }
     // black-and-gold machine: matte black plate and reels, brass rollers / heads / screws, amber counter
     // anodised blue metal (was brass): bright edge, mid blue, deep shadow
-    static inline const juce::Colour gold { 0xff5b9be6 }, goldHi { 0xffc4ddff }, goldLo { 0xff163a6a };
+    static inline const juce::Colour gold { 0xff7ff7f2 }, goldHi { 0xffdcfffd }, goldLo { 0xff1c5f5c };   // the DAW's cyan
     static void brass (juce::Graphics& g, juce::Point<float> c, float rad, bool machined = true)
     {
         {
@@ -918,7 +918,7 @@ public:
         auto cnt = juce::Rectangle<float> (86.0f, 20.0f).withCentre ({ cx, plate.getY() + 20.0f });
         g.setColour (juce::Colour (0xff050505)); g.fillRoundedRectangle (cnt, 2.0f);
         g.setColour (juce::Colour (0xff2a2a2a)); g.drawRoundedRectangle (cnt, 2.0f, 1.0f);
-        g.setColour (juce::Colour (0xffffa53a)); g.setFont (VegaFonts::mono (12.5f));
+        g.setColour (VegaColours::accent); g.setFont (VegaFonts::mono (12.5f));
         g.drawText (counter, cnt, juce::Justification::centred);
         auto lamp = [&] (float x, const juce::String& t, bool lit, juce::Colour c)
         {
