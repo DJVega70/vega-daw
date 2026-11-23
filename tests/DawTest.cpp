@@ -4,6 +4,7 @@
 #include "../Source/StemSeparator.h"
 #include "../Source/StemClient.h"
 #include "../Source/DawUI.h"
+#include "../Source/Fl49Hub.h"
 #include <iostream>
 static int fails = 0;
 static void check (bool ok, const juce::String& m) { std::cout << (ok ? "PASS " : "FAIL ") << m << "\n"; if (! ok) ++fails; }
@@ -154,6 +155,63 @@ int main()
         check (faderFb && muteLed && nameSx, "HUI feedback: motor-fader positions, mute LED and track names are sent");
         sent.clear(); hui.updateFeedback();
         check (sent.empty(), "HUI feedback only sends changes (" + juce::String ((int) sent.size()) + " msgs when idle)");
+    }
+    // ---- VEGA FL49: scale / chord keys, plug-in macro knobs, pads
+    {
+        fl49::NoteProcessor p; fl49::NoteProcessor::Out o[32];
+        fl49::Settings st; st.root = 9; st.scale = 1; st.keys = fl49::KeyMode::snap; p.setSettings (st);     // A minor, snap
+        int n = p.process (1, 61, 100, true, o);
+        check (n == 1 && o[0].note == 60 && o[0].on, "FL49 snap: C# plays C in A minor");
+        n = p.process (1, 61, 0, false, o);
+        check (n == 1 && o[0].note == 60 && ! o[0].on, "FL49 snap: the note-off follows the snapped note");
+        st.keys = fl49::KeyMode::filter; p.setSettings (st);
+        check (p.process (1, 61, 100, true, o) == 0 && p.process (1, 61, 0, false, o) == 0, "FL49 filter: out-of-key notes (and their note-offs) don't play");
+        st.keys = fl49::KeyMode::snap; st.chord = fl49::ChordMode::seventh; p.setSettings (st);
+        n = p.process (1, 57, 100, true, o);
+        check (n == 4 && o[0].note == 57 && o[1].note == 60 && o[2].note == 64 && o[3].note == 67, "FL49 chords: A plays Am7 (A C E G) in A minor");
+        st.chord = fl49::ChordMode::off; p.setSettings (st);
+        check (p.process (1, 57, 0, false, o) == 4, "FL49 chords: changing mode while a key is down still releases the whole chord");
+        st.chord = fl49::ChordMode::seventh; st.root = 0; st.scale = 0; p.setSettings (st);
+        p.process (1, 60, 100, true, o); p.process (1, 64, 100, true, o);
+        n = p.process (1, 60, 0, false, o);
+        check (n == 1 && o[0].note == 60, "FL49 chords: overlapping chords keep their shared notes");
+        check (p.process (1, 64, 0, false, o) == 4, "FL49 chords: last key up ends every note");
+        fl49::PadMap pm;
+        check (pm.padFor (10, 36) == 8 && pm.padFor (10, 51) == 7 && pm.padFor (1, 36) == -1, "FL49 pads: default Drum-mode map (ch 10, 36 bottom-left)");
+
+        // knobs in PLUGIN mode turn the selected track's plug-in
+        DawSession d (engine);
+        auto* syn = d.getTracks (false)[1];
+        Fl49Hub fl (engine, d);
+        fl.getSelectedTrack = [syn] { return syn; };
+        fl.getBankStart = [] { return 0; };
+        HuiSurface hui (d);
+        hui.macroParam = [&fl] (int k) { return fl.macroParam (k); };
+        hui.encMode = HuiSurface::EncMode::plugin;
+        auto* mp = fl.macroParam (0);
+        check (mp != nullptr && fl.macroPlugin() == syn->pluginList[0], "FL49 macros: knob 1 = the instrument's first parameter (" + (mp != nullptr ? mp->getParameterName() : juce::String ("none")) + ")");
+        if (mp != nullptr)
+        {
+            mp->setNormalisedParameter (0.5f, juce::sendNotification);
+            const float before = mp->getCurrentNormalisedValue();
+            for (int k = 0; k < 5; ++k) hui.handleIncoming (juce::MidiMessage::controllerEvent (1, 0x40, 0x42));
+            check (mp->getCurrentNormalisedValue() > before + 0.05f, "FL49 macros: turning encoder 1 turns the plug-in knob (" + juce::String (before, 2) + " -> " + juce::String (mp->getCurrentNormalisedValue(), 2) + ")");
+            check (std::abs (d.getTracks (true)[0]->getVolumePlugin()->getPan()) < 0.001f, "FL49 macros: ...and doesn't pan track 1");
+        }
+        // key settings are saved with the project
+        fl49::Settings ks; ks.root = 5; ks.scale = 2; ks.keys = fl49::KeyMode::snap; ks.chord = fl49::ChordMode::soul;
+        fl.setKeySettings (ks);
+        fl.loadKeySettingsFromEdit();
+        const auto back = fl.keySettings();
+        check (back.root == 5 && back.scale == 2 && back.keys == fl49::KeyMode::snap && back.chord == fl49::ChordMode::soul && (int) d.edit().state.getProperty ("vegaKeyRoot") == 5,
+               "FL49 key / scale / chord mode are stored in the project");
+        // pads in CLIPS mode launch the slot under them (pad 2 = track 2, top row = first scene)
+        d.ensureScenes (2);
+        auto* clip = d.createSlotMidiClip (*syn, 0, 1);
+        fl.setPadMode (Fl49Hub::PadMode::clips);
+        fl.pressPad (1, 100);
+        check (clip != nullptr && syn->playSlotClips.get(), "FL49 pads: CLIPS mode launches the clip under the pad");
+        fl.setPadMode (Fl49Hub::PadMode::drums);
     }
     {   // master tape machine (the reel-to-reel)
         DawSession d (engine);

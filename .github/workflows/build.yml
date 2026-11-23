@@ -38,8 +38,19 @@ jobs:
           grep -v '^PROGRESS' helper.log | tail -3; echo "exit code $code"; grep -q '^DONE' helper.log
 
   windows:
-    name: Windows app
+    name: Windows app (${{ matrix.product }})
     runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # the main DAW and the VEGA FL49 edition (FLkey 2 49) are built side by side from the same code
+          - product: Vega Productions DAW
+            flag: "-DVEGA_FL49=OFF"
+            package: VegaProductions-DAW
+          - product: VEGA FL49
+            flag: "-DVEGA_FL49=ON"
+            package: VEGA-FL49
     steps:
       - uses: actions/checkout@v4
       - name: Fetch Tracktion Engine
@@ -60,7 +71,7 @@ jobs:
         run: |
           EXTRA=""
           if [ -n "$ASIO_DIR" ]; then EXTRA="-DVEGA_ASIO=ON -DASIO_SDK_DIR=$ASIO_DIR"; echo "Building with ASIO"; fi
-          cmake -B build -G "Visual Studio 17 2022" -A x64 -DTE_DIR="$(pwd -W)/te" $EXTRA
+          cmake -B build -G "Visual Studio 17 2022" -A x64 -DTE_DIR="$(pwd -W)/te" ${{ matrix.flag }} $EXTRA
       - name: Build
         run: cmake --build build --config Release --target VegaDAW --parallel
       - name: Stem separation self-test on Windows (real model, both engine builds)
@@ -77,25 +88,26 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item "build/VegaDAW_artefacts/Release/Vega Productions DAW.exe" dist/
+          Copy-Item "build/VegaDAW_artefacts/Release/${{ matrix.product }}.exe" dist/
           Copy-Item "build/VegaDAW_artefacts/Release/VegaStemHelper.exe", "build/VegaDAW_artefacts/Release/VegaStemHelperAVX2.exe" dist/
           Copy-Item README.md, LICENSE, TRACKTION_LICENSE.md dist/
-          Compress-Archive -Path dist/* -DestinationPath VegaProductions-DAW-Windows.zip
+          Compress-Archive -Path dist/* -DestinationPath ${{ matrix.package }}-Windows.zip
       - name: Build the installer (Inno Setup)
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
           $ver = (Select-String -Path CMakeLists.txt -Pattern 'project\(VegaDAW VERSION ([0-9.]+)\)').Matches[0].Groups[1].Value
-          & $iscc "/DAppVersion=$ver.${{ github.run_number }}" "/DSrcDir=$PWD\dist" installer\VegaDAW.iss
+          $edition = if ("${{ matrix.package }}" -eq "VEGA-FL49") { "/DFL49=1" } else { "/DMAIN=1" }
+          & $iscc "/DAppVersion=$ver.${{ github.run_number }}" "/DSrcDir=$PWD\dist" $edition installer\VegaDAW.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Copy-Item installer-out\VegaProductions-DAW-Setup.exe .
+          Copy-Item "installer-out\${{ matrix.package }}-Setup.exe" .
       - uses: actions/upload-artifact@v4
         with:
-          name: VegaProductions-DAW-Windows
+          name: ${{ matrix.package }}-Windows
           path: |
-            VegaProductions-DAW-Windows.zip
-            VegaProductions-DAW-Setup.exe
+            ${{ matrix.package }}-Windows.zip
+            ${{ matrix.package }}-Setup.exe
 
   android:
     name: Android app (Vega Sketch)
@@ -214,6 +226,7 @@ jobs:
           name: Vega Productions DAW - build ${{ github.run_number }}
           make_latest: true
           body: |
+            **VEGA FL49 (the FLkey 2 49 edition):** download `VEGA-FL49-Setup.exe` and run it. It installs next to Vega Productions DAW (both can be installed), with its own Start menu entry. Portable: `VEGA-FL49-Windows.zip`.
             **Windows (recommended):** download `VegaProductions-DAW-Setup.exe` and run it. It installs to Program Files, adds Start menu (and optional desktop) shortcuts, opens `.vegaproj` projects, and shows up in Settings > Apps for uninstalling. Running a newer Setup updates your install.
             **Android phone (Vega Sketch):** download `VegaSketch-Android.apk` on the phone and open it (allow installing from your browser / Files the first time). Send sketches to the PC from the menu, then File > Import phone sketch in the DAW.
             **Windows (portable):** `VegaProductions-DAW-Windows.zip`, unzip anywhere and run `Vega Productions DAW.exe`.

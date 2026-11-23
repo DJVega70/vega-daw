@@ -12,6 +12,10 @@
 #include "SessionView.h"
 #include "SongMap.h"
 #include "ExportDialog.h"
+#include "Edition.h"
+#if VEGA_FL49
+ #include "Fl49Panel.h"
+#endif
 
 //==============================================================================
 class TransportBar : public juce::Component, private juce::Timer
@@ -162,7 +166,11 @@ public:
             if (sp != nullptr) browser.startScan (engine.getPluginManager().knownPluginList.getNumTypes() > 0);
         });
         vs.onOpenPianoRoll = [this] { showPianoRoll (true); };
-        vs.onSelectionChanged = [this] { hub.surface.selectedID = vs.selectedTrack; apc.surface.selectedID = vs.selectedTrack; routeMidiToSelectedTrack(); arrange.repaint(); };
+        vs.onSelectionChanged = [this] { hub.surface.selectedID = vs.selectedTrack; apc.surface.selectedID = vs.selectedTrack; routeMidiToSelectedTrack(); arrange.repaint();
+                                    #if VEGA_FL49
+                                     fl49.macroSlot = 0; fl49.macroPage = 0; fl49Panel.refresh();
+                                    #endif
+                                  };
         apc.surface.onSelectTrack = [this] (te::AudioTrack* t) { vs.selectTrack (t); };
         apc.surface.onSelectClip = [this] (te::Clip* c) { vs.selectClip (c); };
         apc.surface.onRecordSlot = [this] (te::AudioTrack& t, int sc) { vs.selectTrack (&t); return launcher.startSlotRecording (t, sc); };
@@ -177,13 +185,24 @@ public:
         hub.onSelectTrack = [this] (te::AudioTrack* t) { vs.selectTrack (t); };
         hub.onSave = [this] { save (false); };
         hub.autoConnect();
+       #if VEGA_FL49
+        addAndMakeVisible (fl49Panel);
+        fl49.getSelectedTrack = [this] { return vs.getSelectedTrack(); };
+        fl49.getBankStart = [this] { return hub.surface.bankStart; };
+        hub.surface.macroParam = [this] (int k) { return fl49.macroParam (k); };
+        hub.surface.onKnobTouched = [this] (int k) { fl49Panel.knobTouched (k); };
+       #endif
         juce::Timer::callAfterDelay (1200, [sp = juce::Component::SafePointer<MainComponent> (this)] { if (sp != nullptr) sp->autoDetectMcu(); });
         pianoRoll.onClose = [this] { showPianoRoll (false); };
         pianoRoll.onDetach = [this] { setPianoFloating (! pianoFloat); };
         mixer.onDetach = [this] { setMixerFloating (! mixerFloat); };
         juce::MessageManager::callAsync ([sp = juce::Component::SafePointer<MainComponent> (this)] { if (sp != nullptr) sp->loadUi(); });
         session.onBeforeEditChange = [this] { engine.getExternalControllerManager().detachFromEdit (&session.edit()); arrange.clearAll(); mixer.clearAll(); };
-        session.onEditChanged = [this] { arrange.editChanged(); mixer.rebuild(); launcher.editChanged(); hub.editChanged(); apc.editChanged(); transport.refreshFromEdit(); setupInputs(); showPianoRoll (false); updateTitle(); };
+        session.onEditChanged = [this] { arrange.editChanged(); mixer.rebuild(); launcher.editChanged(); hub.editChanged(); apc.editChanged();
+                                  #if VEGA_FL49
+                                   fl49.editChanged();
+                                  #endif
+                                   transport.refreshFromEdit(); setupInputs(); showPianoRoll (false); updateTitle(); };
         divider.onDrag = [this] (int dy) { pianoH = juce::jlimit (160, getHeight() - 240, pianoH - dy); resized(); };
         setupInputs();
         transport.refreshFromEdit();
@@ -203,9 +222,17 @@ public:
         auto top = getLocalBounds().removeFromTop (34).toFloat();
         g.setColour (juce::Colour (0xff222222)); g.fillRect (top);
         g.setColour (VegaColours::text); g.setFont (VegaFonts::ui (15.0f, true));
+       #if VEGA_FL49
+        g.setFont (VegaFonts::ui (17.0f, true));
+        g.drawText ("VEGA", top.withTrimmedLeft (12).toNearestInt(), juce::Justification::centredLeft);
+        g.setColour (VegaColours::accent); g.drawText ("FL49", top.withTrimmedLeft (64).toNearestInt(), juce::Justification::centredLeft);
+        g.setColour (VegaColours::textDim); g.setFont (VegaFonts::ui (10.0f, true));
+        g.drawText ("by Vega Productions", top.withTrimmedLeft (112).toNearestInt(), juce::Justification::centredLeft);
+       #else
         g.drawText ("Vega Productions", top.withTrimmedLeft (12).toNearestInt(), juce::Justification::centredLeft);
         g.setColour (VegaColours::textDim); g.setFont (VegaFonts::ui (10.0f, true));
         g.drawText ("DAW  VP-20", top.withTrimmedLeft (150).toNearestInt(), juce::Justification::centredLeft);
+       #endif
         g.setColour (VegaColours::line); g.drawHorizontalLine (33, 0, (float) getWidth());
     }
     void resized() override
@@ -219,6 +246,10 @@ public:
             pianoRoll.setBounds (r.removeFromBottom (pianoH));
             divider.setBounds (r.removeFromBottom (6));
         }
+       #if VEGA_FL49
+        fl49Panel.setVisible (fl49Shown);
+        if (fl49Shown) fl49Panel.setBounds (r.removeFromRight (Fl49Panel::preferredWidth));
+       #endif
         if (browser.isVisible()) browser.setBounds (r.removeFromLeft (browserW));
         arrange.setBounds (r); launcher.setBounds (r); if (! mixerFloat) mixer.setBounds (r);
     }
@@ -233,6 +264,9 @@ public:
         if (k == juce::KeyPress (juce::KeyPress::tabKey)) { showMixer (! mixerShown()); return true; }
         if (k.getKeyCode() == 'M' && ! k.getModifiers().isAnyModifierKeyDown()) { session.edit().getUndoManager().beginNewTransaction ("Add marker"); session.addMarker (tr.getPosition()); return true; }
         if (k.getKeyCode() == 'B' && ! k.getModifiers().isAnyModifierKeyDown()) { showBrowser (! browser.isVisible()); return true; }
+       #if VEGA_FL49
+        if (k.getKeyCode() == 'F' && ! k.getModifiers().isAnyModifierKeyDown()) { fl49Shown = ! fl49Shown; resized(); return true; }
+       #endif
         if (k == juce::KeyPress ('z', cmd, 0)) { session.edit().getUndoManager().undo(); return true; }
         if (k == juce::KeyPress ('z', cmd | juce::ModifierKeys::shiftModifier, 0) || k == juce::KeyPress ('y', cmd, 0)) { session.edit().getUndoManager().redo(); return true; }
         if (k == juce::KeyPress ('s', cmd, 0)) { save (false); return true; }
@@ -278,6 +312,9 @@ public:
             m.addItem (136, "Float the mixer in its own window", true, mixerFloat);
             m.addItem (137, "Float the piano roll in its own window", true, pianoFloat);
             m.addItem (36, "Show plug-in browser   B", true, browser.isVisible());
+           #if VEGA_FL49
+            m.addItem (138, "Show FLkey 2 49 panel   F", true, fl49Shown);
+           #endif
             m.addItem (39, "Routing matrix...");
             m.addSeparator();
             m.addItem (37, "Open instrument of selected track", vs.getSelectedTrack() != nullptr);
@@ -296,7 +333,7 @@ public:
         else
         {
             m.addItem (50, "Keyboard shortcuts...");
-            m.addItem (51, "About Vega Productions DAW");
+            m.addItem (51, "About " VEGA_APP_NAME);
         }
         return m;
     }
@@ -341,6 +378,9 @@ public:
             case 35: showPianoRoll (! pianoShown()); break;
             case 136: setMixerFloating (! mixerFloat); break;
             case 137: setPianoFloating (! pianoFloat); break;
+           #if VEGA_FL49
+            case 138: fl49Shown = ! fl49Shown; resized(); break;
+           #endif
             case 40: showAudioSettings(); break;
             case 41: showBrowser (true); browser.startScan (false); break;
             case 45: showPluginList(); break;
@@ -373,7 +413,7 @@ public:
                         "Ctrl+wheel zoom, Shift+wheel scroll. Double-click an instrument track to create a MIDI clip.\n"
                         "Ruler: click to move the playhead, drag the top strip (or Shift-drag) to set the loop.\n"
                         "Piano roll: click to add notes, drag to move, drag the right edge to resize, right-click or double-click to delete, drag in the velocity lane."); break;
-            case 51: juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::NoIcon, "Vega Productions DAW",
+            case 51: juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::NoIcon, VEGA_APP_NAME,
                         "Version " JUCE_APPLICATION_VERSION_STRING "\n\nBuilt on Tracktion Engine (GPLv3) and JUCE.\n32-bit floating-point, multi-core audio engine."); break;
             default: break;
         }
@@ -403,7 +443,7 @@ private:
         if (sig != midiInputsSeen) { const bool first = midiInputsSeen.isEmpty(); midiInputsSeen = sig; if (! first) setupInputs(); }
         // a keyboard that was switched on a moment ago only shows up in the edit once the engine has opened it:
         // keep checking, so its keys always end up on the selected instrument instead of "not connected to a track"
-        if (++routeTicks >= 2) { routeTicks = 0; if (keysUnrouted()) routeMidiToSelectedTrack(); }
+        if (++routeTicks >= 2) { routeTicks = 0; if (keysUnrouted()) routeMidiToSelectedTrack(); else stripRawFl49Targets(); }
     }
     int routeTicks = 0;
     bool keysUnrouted()
@@ -414,7 +454,7 @@ private:
         for (auto* in : session.edit().getAllInputDevices())
         {
             auto& dev = in->getInputDevice();
-            if (dev.getDeviceType() != te::InputDevice::physicalMidiDevice || ! dev.isEnabled() || isControllerPort (dev.getName())) continue;
+            if (! isKeysInput (*in) || ! dev.isEnabled() || isControllerPort (dev.getName())) continue;
             bool targeted = false;
             for (auto* t : session.getTracks()) if (te::isOnTargetTrack (*in, *t, 0)) targeted = true;
             if (! targeted) return true;
@@ -426,7 +466,7 @@ private:
     void updateTitle()
     {
         const auto f = session.getProjectFile();
-        if (onTitle) onTitle ((f == juce::File() ? juce::String ("Untitled") : f.getFileNameWithoutExtension()) + (session.hasUnsavedChanges() ? " *" : "") + "  -  Vega Productions DAW");
+        if (onTitle) onTitle ((f == juce::File() ? juce::String ("Untitled") : f.getFileNameWithoutExtension()) + (session.hasUnsavedChanges() ? " *" : "") + "  -  " VEGA_APP_NAME);
     }
     void showMixer (bool m)
     {
@@ -474,7 +514,7 @@ private:
     std::unique_ptr<FloatWindow> mixerWin, pianoWin;
     bool mixerFloat = false, pianoFloat = false;
     juce::Rectangle<int> mixerWinBounds, pianoWinBounds;
-    static juce::File uiFile() { return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("Vega Productions DAW").getChildFile ("windows.xml"); }
+    static juce::File uiFile() { return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile (VEGA_APP_NAME).getChildFile ("windows.xml"); }
     void saveUi()
     {
         if (mixerWin != nullptr) mixerWinBounds = mixerWin->getBounds();
@@ -667,7 +707,7 @@ private:
         if (lines.size() < 1 || ! juce::File (lines[0]).existsAsFile()) return;
         const juce::File autosaved (lines[0]), original (lines[1]);
         auto opts = juce::MessageBoxOptions().withTitle ("Recover your work?").withIconType (juce::MessageBoxIconType::QuestionIcon)
-            .withMessage ("Vega Productions DAW didn't close normally last time. There's an autosave of "
+            .withMessage (VEGA_APP_NAME " didn't close normally last time. There's an autosave of "
                           + (original != juce::File() ? "\"" + original.getFileNameWithoutExtension() + "\"" : juce::String ("an unsaved project"))
                           + " from " + juce::File (lines[0]).getLastModificationTime().toString (true, true) + ".")
             .withButton ("Recover", 1).withButton ("Discard it", 0);
@@ -986,8 +1026,31 @@ private:
             if (t == nullptr) return;
         }
         for (auto* in : session.edit().getAllInputDevices())
-            if (in->getInputDevice().getDeviceType() == te::InputDevice::physicalMidiDevice && ! isControllerPort (in->getInputDevice().getName()) && ! te::isOnTargetTrack (*in, *t, 0))
-                [[maybe_unused]] auto r = in->setTarget (t->itemID, true, nullptr, 0);
+        {
+            if (! isKeysInput (*in) || isControllerPort (in->getInputDevice().getName()) || te::isOnTargetTrack (*in, *t, 0)) continue;
+            [[maybe_unused]] auto r = in->setTarget (t->itemID, true, nullptr, 0);
+        }
+        stripRawFl49Targets();
+    }
+    /** A note input that should follow the selected track: a physical keyboard, or (VEGA FL49) the processed FLkey keys */
+    bool isKeysInput (te::InputDeviceInstance& in)
+    {
+        auto& dev = in.getInputDevice();
+       #if VEGA_FL49
+        if (dev.getDeviceType() == te::InputDevice::virtualMidiDevice) return dev.getName() == Fl49Hub::virtualName;
+        if (fl49.isConnected() && Fl49Hub::isKeysPort (dev.getName())) return false;     // its notes arrive through "VEGA FL49 Keys"
+       #endif
+        return dev.getDeviceType() == te::InputDevice::physicalMidiDevice;
+    }
+    /** VEGA FL49: the FLkey's raw keys port must not feed any track (it would double every note) */
+    void stripRawFl49Targets()
+    {
+       #if VEGA_FL49
+        if (! fl49.isConnected()) return;
+        for (auto* in : session.edit().getAllInputDevices())
+            if (in->getInputDevice().getDeviceType() == te::InputDevice::physicalMidiDevice && Fl49Hub::isKeysPort (in->getInputDevice().getName()))
+                for (auto id : in->getTargets()) [[maybe_unused]] auto r = in->removeTarget (id, nullptr);
+       #endif
     }
 
     void open()
@@ -1063,6 +1126,11 @@ private:
     te::Engine& engine;
     DawLookAndFeel lnf;
     DawSession session; te::SelectionManager selection { engine }; ViewState vs; ControllerHub hub; ApcHub apc;
+   #if VEGA_FL49
+    Fl49Hub fl49 { engine, session };
+    Fl49Panel fl49Panel { fl49, hub.surface, hub, vs };
+    bool fl49Shown = true;
+   #endif
     juce::MenuBarComponent menuBar;
     TransportBar transport; ArrangeView arrange; MixerView mixer; SessionView launcher; PianoRoll pianoRoll; PluginBrowser browser; Divider divider;
     int browserW = 250;
@@ -1074,7 +1142,7 @@ private:
 class VegaDawApp : public juce::JUCEApplication
 {
 public:
-    const juce::String getApplicationName() override { return "Vega Productions DAW"; }
+    const juce::String getApplicationName() override { return VEGA_APP_NAME; }
     const juce::String getApplicationVersion() override { return JUCE_APPLICATION_VERSION_STRING; }
     bool moreThanOneInstanceAllowed() override { return false; }
 
@@ -1100,7 +1168,7 @@ public:
 
     struct Window : public juce::DocumentWindow
     {
-        explicit Window (te::Engine& e) : DocumentWindow ("Vega Productions DAW", VegaColours::background, DocumentWindow::allButtons)
+        explicit Window (te::Engine& e) : DocumentWindow (VEGA_APP_NAME, VegaColours::background, DocumentWindow::allButtons)
         {
             setUsingNativeTitleBar (true);
             main = new MainComponent (e);

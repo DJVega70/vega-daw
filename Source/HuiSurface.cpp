@@ -48,8 +48,20 @@ void HuiSurface::handleIncoming (const juce::MidiMessage& m)
     auto delta = [v] { return v > 0x40 ? v - 0x40 : -v; };
     if (cc >= 0x40 && cc <= 0x47)                                      // V-pots
     {
-        auto* t = trackForStrip (cc - 0x40); if (t == nullptr) return;
         const int d = delta();
+        if (encMode == EncMode::plugin)
+        {
+            const int knob = cc - 0x40;
+            if (auto* p = macroParam ? macroParam (knob) : nullptr)
+            {
+                touch (p);
+                p->setNormalisedParameter (juce::jlimit (0.0f, 1.0f, p->getCurrentNormalisedValue() + d * 0.008f), juce::sendNotification);
+            }
+            if (onKnobTouched) onKnobTouched (knob);
+            return;
+        }
+        auto* t = trackForStrip (cc - 0x40); if (t == nullptr) return;
+        if (onKnobTouched) onKnobTouched (cc - 0x40);
         if (encMode == EncMode::pan)
         {
             if (auto vp = t->getVolumePlugin()) vp->setPan (juce::jlimit (-1.0f, 1.0f, vp->getPan() + d * 0.02f));
@@ -164,6 +176,22 @@ void HuiSurface::pressed (int z, int port, bool down)
     updateFeedback();
 }
 
+void HuiSurface::touch (te::AutomatableParameter* p)
+{
+    const auto now = juce::Time::getMillisecondCounter();
+    for (auto& g : gestures) if (g.param.get() == p) { g.last = now; return; }
+    p->parameterChangeGestureBegin();
+    gestures.push_back ({ p, now });
+}
+
+void HuiSurface::endGestures (bool all)
+{
+    const auto now = juce::Time::getMillisecondCounter();
+    for (auto it = gestures.begin(); it != gestures.end();)
+        if (all || now - it->last > 400) { it->param->parameterChangeGestureEnd(); it = gestures.erase (it); }
+        else ++it;
+}
+
 void HuiSurface::switchLed (int z, int port, bool on)
 {
     const int key = z * 8 + port;
@@ -177,6 +205,7 @@ void HuiSurface::switchLed (int z, int port, bool on)
 
 void HuiSurface::updateFeedback (bool force)
 {
+    endGestures();
     if (! send) return;
     if (force) last = {};
     auto& tr = s.edit().getTransport();
@@ -195,7 +224,11 @@ void HuiSurface::updateFeedback (bool force)
         }
         // encoder ring: pan (centre-spread) or send level (fill from left)
         int ring = 0;
-        if (t != nullptr)
+        if (encMode == EncMode::plugin)
+        {
+            if (auto* p = macroParam ? macroParam (strip) : nullptr) ring = 0x20 + juce::jlimit (0, 11, juce::roundToInt (p->getCurrentNormalisedValue() * 11.0f));
+        }
+        else if (t != nullptr)
         {
             if (encMode == EncMode::pan) { if (auto vp = t->getVolumePlugin()) ring = 1 + juce::jlimit (0, 10, juce::roundToInt ((vp->getPan() + 1.0f) * 5.0f)); }
             else if (auto* snd = sendFor (*t, (int) encMode - (int) EncMode::sendA)) ring = 0x20 + juce::jlimit (0, 11, juce::roundToInt ((snd->getGainDb() + 60.0f) / 66.0f * 11.0f));

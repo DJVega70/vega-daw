@@ -15,11 +15,21 @@ add_subdirectory(${TE_DIR}/modules/juce juce_build)
 add_subdirectory(${TE_DIR}/modules tracktion_build)
 
 option(VEGA_ASIO "Build with ASIO support (needs ASIO_SDK_DIR)" OFF)
+# VEGA FL49: the edition built around the Novation FLkey 2 49 (same engine and features, plus the FLkey panel,
+# scale / chord keys and pad / knob integration). -DVEGA_FL49=ON builds "VEGA FL49.exe" instead of "Vega Productions DAW.exe".
+option(VEGA_FL49 "Build the VEGA FL49 edition" OFF)
+if (VEGA_FL49)
+    set(VEGA_PRODUCT "VEGA FL49")
+    set(VEGA_BUNDLE com.vegaproductions.fl49)
+else()
+    set(VEGA_PRODUCT "Vega Productions DAW")
+    set(VEGA_BUNDLE com.vegaproductions.daw)
+endif()
 
 juce_add_gui_app(VegaDAW
-    PRODUCT_NAME "Vega Productions DAW"
+    PRODUCT_NAME "${VEGA_PRODUCT}"
     COMPANY_NAME "Vega Productions"
-    BUNDLE_ID com.vegaproductions.daw
+    BUNDLE_ID ${VEGA_BUNDLE}
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/VegaDAW-icon.png"
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT "Recording audio"
@@ -36,7 +46,8 @@ target_sources(VegaDAW PRIVATE
     Source/MixerView.cpp
     Source/HuiSurface.cpp
     Source/ApcSurface.cpp
-    Source/Controllers.cpp)
+    Source/Controllers.cpp
+    Source/Fl49Hub.cpp)
 
 target_compile_definitions(VegaDAW PRIVATE
     JUCE_PLUGINHOST_AU=1
@@ -45,7 +56,8 @@ target_compile_definitions(VegaDAW PRIVATE
     JUCE_STRICT_REFCOUNTEDPOINTER=1
     JUCE_USE_CURL=0
     JUCE_WEB_BROWSER=0
-    JUCE_APPLICATION_NAME_STRING="Vega Productions DAW"
+    JUCE_APPLICATION_NAME_STRING="${VEGA_PRODUCT}"
+    VEGA_FL49=$<BOOL:${VEGA_FL49}>
     JUCE_APPLICATION_VERSION_STRING="${PROJECT_VERSION}"
     TRACKTION_ENABLE_TIMESTRETCH_SOUNDTOUCH=1
     TRACKTION_ENABLE_CONTROL_SURFACES=1)
@@ -137,7 +149,7 @@ endif()
 option(VEGA_TESTS "Build the headless test app" OFF)
 if (VEGA_TESTS)
     juce_add_console_app(VegaDAWTest PRODUCT_NAME "VegaDAWTest")
-    target_sources(VegaDAWTest PRIVATE tests/DawTest.cpp Source/DawSession.cpp Source/HuiSurface.cpp Source/ApcSurface.cpp Source/StemSeparator.cpp)
+    target_sources(VegaDAWTest PRIVATE tests/DawTest.cpp Source/DawSession.cpp Source/HuiSurface.cpp Source/ApcSurface.cpp Source/StemSeparator.cpp Source/Fl49Hub.cpp)
     target_link_libraries(VegaDAWTest PRIVATE vega_demucs)
     target_compile_definitions(VegaDAWTest PRIVATE
         JUCE_PLUGINHOST_AU=1 JUCE_PLUGINHOST_VST3=1 JUCE_MODAL_LOOPS_PERMITTED=1 JUCE_STRICT_REFCOUNTEDPOINTER=1

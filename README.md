@@ -6,6 +6,7 @@ A digital audio workstation for the Vega Productions suite — built on the open
 ![mixer](docs/mixer.png)
 
 ## Download
+- **VEGA FL49, the FLkey 2 49 edition:** https://github.com/DJVega70/vega-daw/releases/latest/download/VEGA-FL49-Setup.exe (see *VEGA FL49* below).
 - **Windows installer (recommended):** https://github.com/DJVega70/vega-daw/releases/latest/download/VegaProductions-DAW-Setup.exe — run it to install to Program Files with Start menu / desktop shortcuts, `.vegaproj` file opening, and an uninstaller in Settings > Apps. Run a newer Setup to update.
 - **Windows portable:** https://github.com/DJVega70/vega-daw/releases/latest/download/VegaProductions-DAW-Windows.zip — unzip anywhere and run `Vega Productions DAW.exe`. Keep `VegaStemHelper.exe` and `VegaStemHelperAVX2.exe` in the same folder: they run the AI stem separation.
 - **Android phone - Vega Sketch:** https://github.com/DJVega70/vega-daw/releases/latest/download/VegaSketch-Android.apk (see *Vega Sketch* below)
@@ -134,6 +135,37 @@ First run: **Options > Audio / MIDI settings** (pick ASIO / WASAPI on Windows, C
 **Instruments** — every instrument track can host any VST3/AU synth (Vega Multisynth, Workstation, Drums, Sampler, Chords…) or the built-in 4-Osc synth / sampler. Your MIDI keyboard plays whichever instrument track is selected.
 
 **Files** — projects saved as `.vegaproj`; export the mixdown (or just the loop range) to 24-bit WAV.
+
+## VEGA FL49 (the FLkey 2 49 edition)
+**VEGA FL49** is Vega Productions DAW built around the Novation FLkey 2 49. It has the same engine, projects (`.vegaproj`) and features, plus a live **FLkey panel** docked on the right and deeper keyboard integration. Both products can be installed side by side.
+
+- **Download:** https://github.com/DJVega70/vega-daw/releases/latest/download/VEGA-FL49-Setup.exe (portable: `VEGA-FL49-Windows.zip`).
+- **Setup:** plug in the FLkey 2 49 and start VEGA FL49. It finds both of the keyboard's ports by itself:
+  - the **MIDI** port (keys, pads, wheels), shown as **KEYS: SYNCED**;
+  - the **DAW** port (HUI: transport, faders, encoders, buttons), shown as **DAW: ACTIVE**.
+- Leave the FLkey's own Scale and Chord modes **off**. VEGA FL49 does scales and chords on the computer, so they follow the song's key.
+- **F** shows or hides the panel (also in **Track > Show FLkey 2 49 panel**).
+
+**The FLkey panel** mirrors the hardware live, and you can also use it with the mouse:
+- **KNOBS:** what the 8 encoders do.
+  - **PAN** or **SENDS** (click SENDS again to step through A-E) for the 8 tracks the faders show.
+  - **PLUGIN** turns the encoders into **plug-in macros**: the selected track's instrument (◀ ▶ picks an effect instead), 8 parameters at a time (**1-8** pages through them).
+  - **OPEN** opens that plug-in.
+  - Knob turns are recorded when automation **WRITE** is on.
+- **PADS:** what the 16 pads do. Put the FLkey's pads in **Drum** mode.
+  - **DRUMS:** the pads play the selected instrument (General MIDI notes 36-51, so they play Vega Productions Drums).
+  - **CLIPS:** a 2 x 8 clip launcher. Columns are the 8 tracks the faders show; rows are two scenes (▲ ▼ move them). A pad launches its clip, or stops it if it's playing. A pad on an empty slot stops that track. The panel shows each pad in its track's colour, green while playing, blinking while queued.
+  - **SCENES:** the top row launches scenes, the bottom row stops tracks.
+  - **TEACH PADS:** if your pads send different notes, press it and hit the 16 pads, top row first, left to right. **DEFAULT** goes back to channel 10, notes 36-51.
+- **KEYS:** the song key (root and scale) and two switches. The settings are saved with the project.
+  - **NOTES:** **OFF**, **SNAP** (every key plays the nearest note in the key) or **FILTER** (keys outside the key don't play).
+  - **CHORDS:** one key plays a chord built from the key: **TRIAD**, **7TH**, **9TH** or **SOUL** (root, 5th, 7th, 9th with the 3rd on top, an open Soulful House voicing).
+  - What you record is what you heard: snapped notes and whole chords end up in the clip.
+- **FADERS:** the 8 tracks the hardware faders control right now (they follow the bank buttons). Drag one to set its volume; click to select the track. Dots show mute (amber) and solo (blue).
+
+**Still on the FLkey's DAW port (HUI):** faders 1-8 set track volume, fader buttons select tracks, DAW-mode pads mute / solo, the transport buttons work, and the bank buttons move through the tracks. See *Controllers: Novation FLkey 2* below.
+
+**Not possible yet:** Novation doesn't publish how to set the FLkey 2's pad colours, screen text or its built-in Scale mode from a DAW other than FL Studio. So the pads light the way the keyboard's Drum mode lights them, and the panel on screen shows the clip colours and states instead.
 
 ## Controllers: Novation FLkey 2 (and other HUI surfaces)
 The DAW has a built-in **HUI controller script**, the protocol the FLkey 2 uses for DAWs other than FL Studio.

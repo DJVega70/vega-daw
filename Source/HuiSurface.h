@@ -29,7 +29,10 @@ public:
 
     int bankStart = 0;
     te::EditItemID selectedID;                                // keep in sync with the UI selection
-    enum class EncMode { pan, sendA, sendB, sendC, sendD, sendE } encMode = EncMode::pan;
+    enum class EncMode { pan, sendA, sendB, sendC, sendD, sendE, plugin } encMode = EncMode::pan;
+    /** plugin mode (VEGA FL49): the encoders turn these 8 parameters (the selected track's plug-in macros) */
+    std::function<te::AutomatableParameter* (int knob)> macroParam;
+    std::function<void (int knob)> onKnobTouched;            // for the on-screen FLkey panel
     te::AudioTrack* trackForStrip (int strip) const;
     juce::String describe (const juce::MidiMessage&) const;  // human readable, for the monitor
 
@@ -47,4 +50,8 @@ private:
     struct Fb { std::array<int, 8> fader { -1,-1,-1,-1,-1,-1,-1,-1 }, ring { -1,-1,-1,-1,-1,-1,-1,-1 };
                 std::map<int, bool> leds; std::array<juce::String, 8> names; } last;
     juce::uint32 lastTouch[8] {};
+    struct Gesture { te::AutomatableParameter::Ptr param; juce::uint32 last; };
+    std::vector<Gesture> gestures;                            // plug-in knob turns, one gesture each (automation write)
+    void touch (te::AutomatableParameter*);
+    void endGestures (bool all = false);
 };
