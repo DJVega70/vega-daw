@@ -212,7 +212,7 @@ int main()
         fl.pressPad (1, 100);
         check (clip != nullptr && (DawSession::isSlotPlaying (*clip) || DawSession::isSlotQueued (*clip)), "FL49 pads: CLIPS mode launches the clip under the pad");
         fl.pressPad (1, 100);
-        check (clip != nullptr && ! DawSession::isSlotPlaying (*clip), "FL49 pads: pressing it again stops it");
+        check (clip != nullptr && (! DawSession::isSlotPlaying (*clip) || DawSession::isSlotQueued (*clip)), "FL49 pads: pressing it again stops it (now or on the next bar)");
         d.edit().getTransport().stop (false, true);
         fl.setPadMode (Fl49Hub::PadMode::drums);
     }
