@@ -210,7 +210,10 @@ int main()
         auto* clip = d.createSlotMidiClip (*syn, 0, 1);
         fl.setPadMode (Fl49Hub::PadMode::clips);
         fl.pressPad (1, 100);
-        check (clip != nullptr && syn->playSlotClips.get(), "FL49 pads: CLIPS mode launches the clip under the pad");
+        check (clip != nullptr && (DawSession::isSlotPlaying (*clip) || DawSession::isSlotQueued (*clip)), "FL49 pads: CLIPS mode launches the clip under the pad");
+        fl.pressPad (1, 100);
+        check (clip != nullptr && ! DawSession::isSlotPlaying (*clip), "FL49 pads: pressing it again stops it");
+        d.edit().getTransport().stop (false, true);
         fl.setPadMode (Fl49Hub::PadMode::drums);
     }
     {   // master tape machine (the reel-to-reel)
